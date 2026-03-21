@@ -1,0 +1,42 @@
+\xpg@aux {}{russian}
+\contentsline {chapter}{РЕФЕРАТ}{2}{chapter*.1}%
+\contentsline {chapter}{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}{4}{chapter*.3}%
+\contentsline {chapter}{ВВЕДЕНИЕ}{5}{chapter*.4}%
+\contentsline {chapter}{\numberline {1}ОБЗОР ЛИТЕРАТУРЫ И ТЕОРЕТИЧЕСКИЙ КОНТЕКСТ}{6}{chapter.1}%
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\contentsline {chapter}{\numberline {2}ПОСТАНОВКА ЗАДАЧИ И МАТЕМАТИЧЕСКАЯ МОДЕЛЬ}{7}{chapter.2}%
+\contentsline {chapter}{\numberline {3}ТЕОРЕТИЧЕСКИЕ РЕЗУЛЬТАТЫ}{8}{chapter.3}%
+\contentsline {chapter}{\numberline {4}ИМИТАЦИОННОЕ МОДЕЛИРОВАНИЕ И ВАЛИДАЦИЯ}{9}{chapter.4}%
+\contentsline {chapter}{\numberline {5}ЭКСПЕРИМЕНТЫ, АНАЛИЗ ЧУВСТВИТЕЛЬНОСТИ И ПРИКЛАДНАЯ ИНТЕРПРЕТАЦИЯ}{10}{chapter.5}%
+\contentsline {chapter}{ЗАКЛЮЧЕНИЕ}{11}{chapter*.5}%
+\contentsline {chapter}{СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ}{12}{chapter*.7}%
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\xpg@aux {}{english}
+\xpg@aux {}{russian}
+\contentsline {chapter}{\numberline {A}Таблицы параметров экспериментов}{15}{appendix.A}%

@@ -1,0 +1,191 @@
+% !TeX program = lualatex
+\documentclass[a4paper,14pt]{extreport}
+
+% -------------------- Геометрия страницы --------------------
+\usepackage[
+  left=30mm,
+  right=15mm,
+  top=20mm,
+  bottom=20mm
+]{geometry}
+
+% -------------------- Шрифты и язык (LuaLaTeX) --------------------
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Consolas}
+
+\usepackage{polyglossia}
+\setdefaultlanguage{russian}
+\setotherlanguage{english}
+
+% -------------------- Интервалы, абзацы, выравнивание --------------------
+\usepackage{setspace}
+\onehalfspacing
+
+\setlength{\parindent}{1.25cm}
+\setlength{\parskip}{0pt}
+
+\usepackage{ragged2e}
+\justifying
+
+% -------------------- Математика/рисунки/таблицы --------------------
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{tabularx}
+
+% Пути к изображениям
+\graphicspath{{images/}}
+
+% -------------------- Гиперссылки --------------------
+\usepackage[hidelinks]{hyperref}
+
+% -------------------- Списки --------------------
+\usepackage{enumitem}
+\setlist[itemize]{noitemsep, topsep=0pt}
+\setlist[enumerate]{noitemsep, topsep=0pt}
+
+% -------------------- Заголовки (минимально аккуратно) --------------------
+\usepackage{titlesec}
+\titleformat{\chapter}{\bfseries\centering}{\thechapter}{1em}{}
+\titlespacing*{\chapter}{0pt}{1.5\baselineskip}{1\baselineskip}
+
+% -------------------- Библиография по ГОСТ (biblatex + biber) --------------------
+\usepackage{csquotes}
+\usepackage[
+  backend=biber,
+  style=gost-numeric,
+  sorting=none,
+  language=auto,
+  autolang=other,
+  bibencoding=utf8
+]{biblatex}
+\addbibresource{bib/sources.bib}
+
+% -------------------- Поля титульника (заполним сразу) --------------------
+\newcommand{\RUDNFaculty}{Факультет физико-математических и естественных наук}
+\newcommand{\RUDNDepartment}{Кафедра \underline{\hspace{6cm}}} % <- впиши точное название кафедры
+
+\newcommand{\Direction}{01.04.02 «Прикладная математика и информатика»}
+\newcommand{\Profile}{«Теория вероятностей и математическая статистика»}
+
+\newcommand{\ThesisTitle}{Инвариантность стационарного распределения для системы с ограниченными ресурсами и state-dependent \(\lambda(n)\), \(\mu(n)\)}
+\newcommand{\StudentName}{Лобов Михаил Сергеевич}
+\newcommand{\GroupName}{НПМмд-02}
+\newcommand{\StudentID}{1332249565}
+
+\newcommand{\SupervisorLine}{\underline{\hspace{6cm}}} % <- ФИО/степень/должность
+
+\newcommand{\City}{Москва}
+\newcommand{\Yearr}{2026}
+
+% -------------------- Титульный лист --------------------
+\newcommand{\maketitlepage}{
+\begin{titlepage}
+  \begin{center}
+    \small
+    Министерство науки и высшего образования Российской Федерации\\
+    Федеральное государственное автономное образовательное учреждение высшего образования\\
+    \textbf{«Российский университет дружбы народов имени Патриса Лумумбы»}\\[0.8em]
+    \textbf{\RUDNFaculty}\\
+    \RUDNDepartment\\[2.0em]
+
+    \normalsize
+    Направление подготовки: \Direction\\
+    Профиль (магистерская программа): \Profile\\[2.0em]
+
+    \textbf{МАГИСТЕРСКАЯ ДИССЕРТАЦИЯ}\\[0.6em]
+    на тему:\\[0.4em]
+    \textbf{«\ThesisTitle»}\\[2.0em]
+  \end{center}
+
+  \normalsize
+  \begin{flushright}
+    Выполнил студент: \StudentName\\
+    Группа: \GroupName\\
+    Студ. билет: \StudentID\\[1.2em]
+    Научный руководитель: \SupervisorLine\\
+  \end{flushright}
+
+  \vfill
+  \begin{center}
+    \City\ --- \Yearr\ г.
+  \end{center}
+\end{titlepage}
+}
+
+\begin{document}
+
+% Титульник без номера, но как страница 1
+\pagenumbering{gobble}
+\maketitlepage
+\clearpage
+
+% Дальше арабская нумерация со 2 страницы
+\pagenumbering{arabic}
+\setcounter{page}{2}
+
+% -------------------- Реферат --------------------
+\chapter*{РЕФЕРАТ}
+\addcontentsline{toc}{chapter}{РЕФЕРАТ}
+\input{sections/00_abstract.tex}
+\clearpage
+
+% -------------------- Оглавление --------------------
+\tableofcontents
+\clearpage
+
+% -------------------- Сокращения и обозначения --------------------
+\chapter*{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
+\addcontentsline{toc}{chapter}{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
+\input{sections/01_abbrev.tex}
+\clearpage
+
+% -------------------- Введение --------------------
+\chapter*{ВВЕДЕНИЕ}
+\addcontentsline{toc}{chapter}{ВВЕДЕНИЕ}
+\input{sections/02_intro.tex}
+\clearpage
+
+% -------------------- Главы --------------------
+\chapter{ОБЗОР ЛИТЕРАТУРЫ И ТЕОРЕТИЧЕСКИЙ КОНТЕКСТ}
+\input{sections/10_ch1.tex}
+\clearpage
+
+\chapter{ПОСТАНОВКА ЗАДАЧИ И МАТЕМАТИЧЕСКАЯ МОДЕЛЬ}
+\input{sections/20_ch2.tex}
+\clearpage
+
+\chapter{ТЕОРЕТИЧЕСКИЕ РЕЗУЛЬТАТЫ}
+\input{sections/30_ch3.tex}
+\clearpage
+
+\chapter{ИМИТАЦИОННОЕ МОДЕЛИРОВАНИЕ И ВАЛИДАЦИЯ}
+\input{sections/40_ch4.tex}
+\clearpage
+
+\chapter{ЭКСПЕРИМЕНТЫ, АНАЛИЗ ЧУВСТВИТЕЛЬНОСТИ И ПРИКЛАДНАЯ ИНТЕРПРЕТАЦИЯ}
+\input{sections/50_ch5.tex}
+\clearpage
+
+% -------------------- Заключение --------------------
+\chapter*{ЗАКЛЮЧЕНИЕ}
+\addcontentsline{toc}{chapter}{ЗАКЛЮЧЕНИЕ}
+\input{sections/90_conclusion.tex}
+\clearpage
+
+% --- Список использованных источников ---
+\clearpage
+\phantomsection
+\nocite{*} % <-- временно: печатать ВСЕ записи из .bib (можно убрать позже)
+\printbibliography[heading=bibintoc, title={СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ}]
+\clearpage
+
+% -------------------- Приложения --------------------
+\appendix
+\chapter{Таблицы параметров экспериментов}
+\input{sections/91_appendix_a.tex}
+
+\end{document}
