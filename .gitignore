@@ -1,2 +1,16 @@
 *.md
 Документы для практики/
+# Основные временные файлы LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# Файлы библиографии (Biber/BibTeX)
+*.bbl
+*.bcf
+*.blg
+*.run.xml
