@@ -1,7 +1,7 @@
 % !TeX program = lualatex
 \documentclass[a4paper,14pt]{extreport}
 
-% -------------------- Геометрия страницы --------------------
+%  Геометрия страницы 
 \usepackage[
   left=30mm,
   right=15mm,
@@ -9,7 +9,7 @@
   bottom=20mm
 ]{geometry}
 
-% -------------------- Шрифты и язык (LuaLaTeX) --------------------
+%  Шрифты и язык (LuaLaTeX) 
 \usepackage{fontspec}
 \setmainfont{Times New Roman}
 \setsansfont{Arial}
@@ -19,7 +19,7 @@
 \setdefaultlanguage{russian}
 \setotherlanguage{english}
 
-% -------------------- Интервалы, абзацы, выравнивание --------------------
+%  Интервалы, абзацы, выравнивание 
 \usepackage{setspace}
 \onehalfspacing
 
@@ -30,7 +30,7 @@
 \usepackage{ragged2e}
 \justifying
 
-% -------------------- Математика/рисунки/таблицы --------------------
+%  Математика/рисунки/таблицы 
 \usepackage{amsmath,amssymb,mathtools}
 \usepackage{graphicx}
 \usepackage{float}
@@ -41,23 +41,23 @@
 % Пути к изображениям
 \graphicspath{{images/}{figures/}}
 
-% -------------------- Гиперссылки --------------------
+%  Гиперссылки 
 \usepackage[hidelinks]{hyperref}
 
-% -------------------- Списки --------------------
+%  Списки 
 \usepackage{enumitem}
 \setlist[itemize]{noitemsep, topsep=0pt}
 \setlist[enumerate]{noitemsep, topsep=0pt}
 
-% -------------------- Заголовки --------------------
+%  Заголовки 
 \usepackage{titlesec}
 \titleformat{\chapter}{\bfseries\centering}{\thechapter}{1em}{}
 \titlespacing*{\chapter}{0pt}{1.5\baselineskip}{1\baselineskip}
 
-% -------------------- Названия служебных элементов --------------------
+%  Названия служебных элементов 
 \renewcommand{\contentsname}{Оглавление}
 
-% -------------------- Библиография по ГОСТ --------------------
+%  Библиография по ГОСТ 
 \usepackage{csquotes}
 \usepackage[
   backend=biber,
@@ -69,7 +69,7 @@
 ]{biblatex}
 \addbibresource{bib/sources.bib}
 
-% -------------------- Служебные макросы титульного листа --------------------
+%  Служебные макросы титульного листа 
 \newcommand{\UniversityName}{«Российский университет дружбы народов имени Патриса Лумумбы»}
 % Если кафедра требует старую формулировку, замени строку выше на:
 % \newcommand{\UniversityName}{«Российский университет дружбы народов»}
@@ -101,13 +101,13 @@
 \newcommand{\City}{Москва}
 \newcommand{\Yearr}{2026}
 
-% -------------------- Титульный лист --------------------
+%  Титульный лист 
 \newcommand{\maketitlepage}{
 \begin{titlepage}
 \thispagestyle{empty}
 \setstretch{1.0}
 
-% ---------- Верхний блок ----------
+%  Верхний блок 
 \begin{center}
 \small
 МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ\\
@@ -121,7 +121,7 @@
 
 \vspace{0.6em}
 
-% ---------- Допуск ----------
+%  Допуск 
 \begin{flushleft}
 \normalsize
 \AdmissionText\\
@@ -133,7 +133,7 @@
 
 \vspace{0.9em}
 
-% ---------- Тип работы и тема ----------
+%  Тип работы и тема 
 \begin{center}
 \textbf{\ThesisType}\\[0.7em]
 Направление \Direction\\
@@ -147,7 +147,7 @@
 
 \vspace{1.2em}
 
-% ---------- Сведения о студенте и руководителе ----------
+%  Сведения о студенте и руководителе 
 \renewcommand{\arraystretch}{1.0}
 \noindent
 \begin{tabularx}{\textwidth}{@{}p{0.49\textwidth}X@{}}
@@ -164,7 +164,7 @@
 
 \vfill
 
-% ---------- Подпись ----------
+%  Подпись 
 \begin{flushright}
 Автор \underline{\hspace{3.2cm}}\\[-0.15em]
 (Подпись)
@@ -172,7 +172,7 @@
 
 \vspace{0.8em}
 
-% ---------- Город и год ----------
+%  Город и год 
 \begin{center}
 г.~\City\\
 \Yearr\ г.
@@ -183,39 +183,39 @@
 
 \begin{document}
 
-% -------------------- Титульный лист --------------------
+%  Титульный лист 
 \pagenumbering{gobble}
 \maketitlepage
 \clearpage
 
-% -------------------- Нумерация после титульного листа --------------------
+%  Нумерация после титульного листа 
 \pagenumbering{arabic}
 \setcounter{page}{1}
 
-% -------------------- Аннотация --------------------
+%  Аннотация 
 % Если кафедра требует именно "РЕФЕРАТ", замени заголовок ниже.
 \chapter*{АННОТАЦИЯ}
 \addcontentsline{toc}{chapter}{АННОТАЦИЯ}
 \input{sections/00_abstract.tex}
 \clearpage
 
-% -------------------- Оглавление --------------------
+%  Оглавление 
 \tableofcontents
 \clearpage
 
-% -------------------- Список сокращений и обозначений --------------------
+%  Список сокращений и обозначений 
 \chapter*{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
 \addcontentsline{toc}{chapter}{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
 \input{sections/01_abbrev.tex}
 \clearpage
 
-% -------------------- Введение --------------------
+%  Введение 
 \chapter*{ВВЕДЕНИЕ}
 \addcontentsline{toc}{chapter}{ВВЕДЕНИЕ}
 \input{sections/02_intro.tex}
 \clearpage
 
-% -------------------- Основные главы --------------------
+%  Основные главы 
 \chapter{Инвариантность в системах массового обслуживания с ограниченными ресурсами: обзор и постановка задачи исследования}
 \input{sections/10_ch1.tex}
 \clearpage
@@ -228,29 +228,30 @@
 \input{sections/30_ch3.tex}
 \clearpage
 
-% -------------------- Заключение --------------------
+%  Заключение 
 \chapter*{ЗАКЛЮЧЕНИЕ}
 \addcontentsline{toc}{chapter}{ЗАКЛЮЧЕНИЕ}
 \input{sections/90_conclusion.tex}
 \clearpage
 
-% -------------------- Список использованных источников --------------------
+%  Список использованных источников 
 \phantomsection
 % \nocite{*} % временно включай только если нужно печатать все записи из .bib
 \printbibliography[heading=bibintoc, title={СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ}]
 \clearpage
 
-% -------------------- Приложения --------------------
+%  Приложения 
 \appendix
 
 \chapter{Таблицы параметров вычислительного эксперимента}
 \input{sections/91_appendix_a.tex}
 
-% При необходимости раскомментируй:
+% Что можно раскоментить, посмотреть позже во время фин. оформления:
+
 % \clearpage
 % \chapter{Дополнительные выкладки}
 % \input{sections/92_appendix_b.tex}
-%
+
 % \clearpage
 % \chapter{Листинги программной реализации}
 % \input{sections/93_appendix_c.tex}

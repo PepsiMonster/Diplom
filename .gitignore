@@ -14,3 +14,8 @@
 *.bcf
 *.blg
 *.run.xml
+
+# Прочие, временно?
+Program_files/
+*.docx
+Обозначения.pdf
