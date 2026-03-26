@@ -231,10 +231,6 @@ def run_all_experiments(
     save_dict_rows_to_csv(raw_rows, run_results_path)
     save_dict_rows_to_csv(summary_rows, summary_results_path)
 
-    print("Эксперименты завершены.")
-    print(f"Сырые результаты сохранены в: {run_results_path}")
-    print(f"Агрегированные результаты сохранены в: {summary_results_path}")
-
     return {
         "run_results_csv": run_results_path,
         "summary_results_csv": summary_results_path,
