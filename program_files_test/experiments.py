@@ -143,7 +143,7 @@ def save_dict_rows_to_csv(rows: list[dict[str, Any]], output_path: Path) -> None
 
 def run_workload_sensitivity_experiments(
     *,
-    mean_workload: float = 1.0,
+    mean_workload: float = 1.5,
     replications_override: int | None = None,
     max_time_override: float | None = None,
     warmup_time_override: float | None = None,
@@ -208,7 +208,7 @@ def build_raw_rows(results: list[SimulationResult]) -> list[dict[str, Any]]:
 
 def run_all_experiments(
     *,
-    mean_workload: float = 1.0,
+    mean_workload: float = 1.5,
     replications_override: int | None = None,
     max_time_override: float | None = None,
     warmup_time_override: float | None = None,
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     # Для self-test делаем серию короткой,
     # чтобы можно было быстро проверить работоспособность.
     run_all_experiments(
-        mean_workload=1.0,
+        mean_workload=1.5,
         replications_override=3,
         max_time_override=2_000.0,
         warmup_time_override=200.0,
