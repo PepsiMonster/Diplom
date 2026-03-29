@@ -1,0 +1,15 @@
+{
+  "status": "ok",
+  "artifacts": {
+    "experiments": {
+      "run_results_csv": "results\\raw\\run_results.csv",
+      "summary_results_csv": "results\\raw\\summary_results.csv"
+    },
+    "plots": {
+      "mean_num_jobs_png": "results\\figures\\mean_num_jobs.png",
+      "loss_probability_png": "results\\figures\\loss_probability.png",
+      "throughput_png": "results\\figures\\throughput.png",
+      "stationary_distribution_png": "results\\figures\\stationary_distribution.png"
+    }
+  }
+}
