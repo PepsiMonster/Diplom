@@ -118,6 +118,8 @@ class SystemState:
 
     active_jobs: dict[int, Job] = field(default_factory=dict)
 
+    occupied_resource_total: int = 0
+
     next_job_id: int = 1
 
     @property
@@ -130,7 +132,7 @@ class SystemState:
 
     def occupied_resource(self) -> int:
 
-        return sum(job.resource_demand for job in self.active_jobs.values())
+        return self.occupied_resource_total
 
     def free_resource(self, scenario: ScenarioConfig) -> int:
 
@@ -224,13 +226,19 @@ class SystemState:
 
         self.active_jobs[job.job_id] = job
 
+        self.occupied_resource_total += job.resource_demand
+
     def remove_job(self, job_id: int) -> Job:
 
         if job_id not in self.active_jobs:
 
             raise KeyError(f"Заявка job_id={job_id} не найдена среди активных")
 
-        return self.active_jobs.pop(job_id)
+        removed = self.active_jobs.pop(job_id)
+
+        self.occupied_resource_total -= removed.resource_demand
+
+        return removed
 
     def advance_time_and_service(self, dt: float, scenario: ScenarioConfig) -> None:
 
