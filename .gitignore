@@ -17,5 +17,10 @@
 
 # Прочие, временно?
 # Program_files/
-*.docx
-Обозначения.pdf
+*.pdf
+!tex/main.pdf
+/program_files_test.zip
+/tex.zip
+__pycache__/
+*.pyc
+*.pyo
