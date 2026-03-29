@@ -543,7 +543,7 @@ def main() -> None:
     default_output_dir = json_path.parent / "plots"
     output_dir = Path(args.output_dir) if args.output_dir else default_output_dir
 
-    created = generate_standard_plots(
+    generate_standard_plots(
         suite_data,
         output_dir=output_dir,
         dpi=args.dpi,
@@ -552,9 +552,6 @@ def main() -> None:
 
     print("=" * 80)
     print(f"Графики сохранены в: {output_dir}")
-    print(f"Создано файлов: {len(created)}")
-    for path in created:
-        print(f"  - {path}")
     print("=" * 80)
 
 

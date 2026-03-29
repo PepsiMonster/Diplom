@@ -199,7 +199,7 @@ def run_plots_mode(args: argparse.Namespace) -> Path:
     json_path = resolve_suite_result_json(args.input)
 
     output_dir = Path(args.output_dir) if args.output_dir else json_path.parent / "plots"
-    created = generate_standard_plots(
+    generate_standard_plots(
         suite_data,
         output_dir=output_dir,
         dpi=args.dpi,
@@ -208,9 +208,6 @@ def run_plots_mode(args: argparse.Namespace) -> Path:
 
     print("=" * 80)
     print(f"Папка с графиками: {output_dir}")
-    print(f"Построено файлов: {len(created)}")
-    for path in created:
-        print(f"  - {path}")
     print("=" * 80)
 
     return Path(output_dir)
@@ -225,7 +222,7 @@ def run_full_mode(args: argparse.Namespace) -> Path:
     suite_data = load_suite_data(suite_dir)
     plots_dir = suite_dir / "plots"
 
-    created = generate_standard_plots(
+    generate_standard_plots(
         suite_data,
         output_dir=plots_dir,
         dpi=args.dpi,
@@ -236,7 +233,6 @@ def run_full_mode(args: argparse.Namespace) -> Path:
     print("Полный запуск завершён.")
     print(f"Результаты серии: {suite_dir}")
     print(f"Графики: {plots_dir}")
-    print(f"Создано графиков: {len(created)}")
     print("=" * 80)
 
     return suite_dir
