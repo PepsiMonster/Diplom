@@ -332,7 +332,7 @@ def build_base_service_profile(capacity_k: int) -> tuple[float, ...]:
 
     values = []
     for k in range(capacity_k + 1):
-        sigma_k = max(1.20 - 0.04 * k, 0.60)
+        sigma_k = max(1.15 - 0.07 * k, 0.45)
         values.append(sigma_k)
 
     return tuple(values)
@@ -372,17 +372,17 @@ def build_base_scenario(workload_distribution: WorkloadDistributionConfig,*,name
                         ) -> ScenarioConfig:
     """
     Собираем базовый сценарий и фиксируем:
-    - K = 10;
-    - N = 10;
-    - R = 20;
+    - K = 8;
+    - N = 6;
+    - R = 12;
     - простой закон требований к ресурсу;
     - базовые профили lambda_k и sigma_k.
 
     Меняется только распределение объёма работы.
     """
-    capacity_k = 10
-    servers_n = 10
-    total_resource_r = 20
+    capacity_k = 8
+    servers_n = 6
+    total_resource_r = 12
 
     scenario = ScenarioConfig(
         name=f"base{name_suffix}",

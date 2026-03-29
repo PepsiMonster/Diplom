@@ -198,9 +198,6 @@ def build_all_plots(results_dir: str = "results") -> dict[str, Path]:
         output_path=stationary_distribution_path,
     )
 
-    print("Графики построены.")
-    print(f"Папка с графиками: {figures_dir}")
-
     return {
         "mean_num_jobs_png": mean_num_jobs_path,
         "loss_probability_png": loss_probability_path,
