@@ -3,7 +3,8 @@
   "artifacts": {
     "experiments": {
       "run_results_csv": "results\\raw\\run_results.csv",
-      "summary_results_csv": "results\\raw\\summary_results.csv"
+      "summary_results_csv": "results\\raw\\summary_results.csv",
+      "summary_results_txt": "results\\raw\\summary_results.txt"
     },
     "plots": {
       "mean_num_jobs_png": "results\\figures\\mean_num_jobs.png",
