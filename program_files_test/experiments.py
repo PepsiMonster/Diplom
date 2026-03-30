@@ -139,6 +139,32 @@ def save_dict_rows_to_csv(rows: list[dict[str, Any]], output_path: Path) -> None
         writer.writeheader()
         writer.writerows(rows)
 
+
+def save_summary_rows_to_txt(summary_rows: list[dict[str, Any]], output_path: Path) -> None:
+    """
+    Сохраняет краткий текстовый отчёт по агрегированным результатам.
+    """
+    lines: list[str] = [
+        "Краткий отчёт по агрегированным результатам",
+        "=" * 42,
+        "",
+    ]
+    if not summary_rows:
+        lines.append("Сводные данные отсутствуют.")
+    else:
+        for row in summary_rows:
+            scenario = row.get("scenario_name", "unknown")
+            workload = row.get("workload_name", "unknown")
+            throughput = row.get("throughput_mean", "n/a")
+            loss_probability = row.get("loss_probability_mean", "n/a")
+            mean_num_jobs = row.get("mean_num_jobs_mean", "n/a")
+            lines.append(
+                f"- {scenario} ({workload}): "
+                f"throughput={throughput}, loss_probability={loss_probability}, mean_num_jobs={mean_num_jobs}"
+            )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
 # Запуск серии ЭЭЭЭЭкспериментов
 
 def run_workload_sensitivity_experiments(
@@ -227,13 +253,16 @@ def run_all_experiments(
 
     run_results_path = dirs["raw"] / "run_results.csv"
     summary_results_path = dirs["raw"] / "summary_results.csv"
+    summary_results_txt_path = dirs["raw"] / "summary_results.txt"
 
     save_dict_rows_to_csv(raw_rows, run_results_path)
     save_dict_rows_to_csv(summary_rows, summary_results_path)
+    save_summary_rows_to_txt(summary_rows, summary_results_txt_path)
 
     return {
         "run_results_csv": run_results_path,
         "summary_results_csv": summary_results_path,
+        "summary_results_txt": summary_results_txt_path,
     }
 
 # Позволяет запустить experiments.py отдельно без run.py.
