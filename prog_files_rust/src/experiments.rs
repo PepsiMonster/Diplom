@@ -120,10 +120,46 @@ impl ExperimentSuiteResult {
     pub fn all_run_rows(&self) -> Vec<BTreeMap<String, Value>> {
         let mut rows = Vec::new();
 
-        for (scenario_name, result) in &self.scenario_results {
+        for (scenario_key, result) in &self.scenario_results {
             for run_summary in &result.run_summaries {
                 let mut row = run_summary.clone();
-                row.insert("scenario_name".to_string(), json!(scenario_name));
+                row.insert("suite_name".to_string(), json!(self.suite_name));
+                row.insert("scenario_key".to_string(), json!(scenario_key));
+                row.insert("scenario_name".to_string(), json!(result.scenario_name));
+                row.insert(
+                    "scenario_description".to_string(),
+                    json!(result.scenario_description),
+                );
+                rows.push(row);
+            }
+        }
+
+        rows
+    }
+
+    pub fn metric_rows(&self) -> Vec<BTreeMap<String, Value>> {
+        let mut rows = Vec::new();
+
+        for (scenario_key, result) in &self.scenario_results {
+            for (metric_name, summary) in &result.metric_summaries {
+                let mut row = BTreeMap::new();
+                row.insert("suite_name".to_string(), json!(self.suite_name));
+                row.insert("scenario_key".to_string(), json!(scenario_key));
+                row.insert("scenario_name".to_string(), json!(result.scenario_name));
+                row.insert(
+                    "scenario_description".to_string(),
+                    json!(result.scenario_description),
+                );
+                row.insert("metric_name".to_string(), json!(metric_name));
+                row.insert("n".to_string(), json!(summary.n));
+                row.insert("mean".to_string(), json!(summary.mean));
+                row.insert("std".to_string(), json!(summary.std));
+                row.insert("stderr".to_string(), json!(summary.stderr));
+                row.insert("ci_level".to_string(), json!(summary.ci_level));
+                row.insert("ci_low".to_string(), json!(summary.ci_low));
+                row.insert("ci_high".to_string(), json!(summary.ci_high));
+                row.insert("min_value".to_string(), json!(summary.min_value));
+                row.insert("max_value".to_string(), json!(summary.max_value));
                 rows.push(row);
             }
         }
@@ -471,6 +507,7 @@ pub fn save_experiment_suite(
 
     let aggregated_rows = suite_result.aggregated_rows();
     let all_run_rows = suite_result.all_run_rows();
+    let metric_rows = suite_result.metric_rows();
     let json_payload = suite_to_json_ready(suite_result);
 
     write_csv(
@@ -478,6 +515,7 @@ pub fn save_experiment_suite(
         &output_path.join("aggregated_summary.csv"),
     )?;
     write_csv(&all_run_rows, &output_path.join("all_runs.csv"))?;
+    write_csv(&metric_rows, &output_path.join("metric_summaries_long.csv"))?;
     fs::write(
         output_path.join("suite_result.json"),
         serde_json::to_string_pretty(&json_payload)?,
