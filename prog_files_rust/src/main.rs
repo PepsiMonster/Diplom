@@ -1,13 +1,11 @@
-mod params;
-mod model;
-mod simulation;
 mod experiments;
+mod model;
+mod params;
 mod plots;
 mod run;
+mod simulation;
 
-fn main() {
-    if let Err(e) = run::cli_entry() {
-        eprintln!("error: {e}");
-        std::process::exit(1);
-    }
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run::cli_entry()?;
+    Ok(())
 }

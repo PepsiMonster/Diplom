@@ -1,211 +1,674 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clap::{Parser, Subcommand};
+use chrono::Local;
+use clap::{Args, Parser, Subcommand, ValueEnum};
+// use serde_json::json;
+use thiserror::Error;
 
-use crate::experiments::{aggregated_rows, all_run_rows, run_experiment_suite, ExperimentSuiteResult};
-use crate::params::build_base_scenario;
-use crate::plots::{plot_metric_bar, plot_stationary_distribution};
-use crate::simulation::simulate_one_run;
+use crate::experiments::{
+    build_default_experiment_suite, print_experiment_suite_summary, run_experiment_suite,
+    save_experiment_suite, ExperimentSuiteResult, ExperimentsError,
+};
+use crate::params::{
+    build_sensitivity_scenarios, print_scenario_summary, standard_workload_family, ParamsError,
+    ScenarioConfig,
+};
+use crate::plots::{
+    generate_standard_plots, load_suite_data, resolve_suite_result_json, PlotSuiteData, PlotsError,
+};
+use crate::simulation::{
+    print_run_summary, simulate_one_run, SimulationError, SimulationRunResult,
+};
+
+#[derive(Debug, Error)]
+pub enum RunError {
+    #[error("{0}")]
+    Validation(String),
+
+    #[error(transparent)]
+    Params(#[from] ParamsError),
+
+    #[error(transparent)]
+    Simulation(#[from] SimulationError),
+
+    #[error(transparent)]
+    Experiments(#[from] ExperimentsError),
+
+    #[error(transparent)]
+    Plots(#[from] PlotsError),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+}
+
+type Result<T> = std::result::Result<T, RunError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ScenarioFamily {
+    Default,
+    Sensitivity,
+}
 
 #[derive(Debug, Parser)]
-#[command(name = "prog_files_rust")]
-#[command(about = "Rust CLI для имитационной модели", long_about = None)]
+#[command(
+    name = "prog_files_rust",
+    about = "Единая точка входа для симуляции, экспериментов и plotting"
+)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    pub command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    Single {
-        #[arg(long, default_value_t = 1.0)]
-        mean_workload: f64,
-        #[arg(long, default_value_t = 0)]
-        replication_index: usize,
-        #[arg(long)]
-        seed: Option<u64>,
-        #[arg(long, default_value = "results_rust")]
-        output_dir: PathBuf,
-    },
-    Suite {
-        #[arg(long, default_value_t = 1.0)]
-        mean_workload: f64,
-        #[arg(long, default_value_t = 10)]
-        replications: usize,
-        #[arg(long, default_value = "results_rust")]
-        output_dir: PathBuf,
-    },
-    Plots {
-        #[arg(long, default_value = "results_rust/suite_result.json")]
-        suite_json: PathBuf,
-        #[arg(long, default_value = "results_rust/plots")]
-        output_dir: PathBuf,
-    },
-    Full {
-        #[arg(long, default_value_t = 1.0)]
-        mean_workload: f64,
-        #[arg(long, default_value_t = 10)]
-        replications: usize,
-        #[arg(long, default_value = "results_rust")]
-        output_dir: PathBuf,
-    },
+    Single(SingleArgs),
+    Suite(SuiteArgs),
+    Plots(PlotsArgs),
+    Full(FullArgs),
 }
 
-fn write_csv_rows(path: &Path, rows: &[Vec<(String, String)>]) -> Result<(), Box<dyn std::error::Error>> {
-    let mut writer = csv::Writer::from_path(path)?;
-    if rows.is_empty() {
-        writer.flush()?;
-        return Ok(());
-    }
-    let headers = rows[0].iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>();
-    writer.write_record(headers)?;
+#[derive(Debug, Clone, Args)]
+pub struct SingleArgs {
+    #[arg(long)]
+    pub seed: Option<u64>,
 
-    for row in rows {
-        let values = row.iter().map(|(_, v)| v.as_str()).collect::<Vec<_>>();
-        writer.write_record(values)?;
-    }
-    writer.flush()?;
-    Ok(())
+    #[arg(long, default_value_t = 0)]
+    pub replication_index: usize,
+
+    #[arg(long)]
+    pub max_time: Option<f64>,
+
+    #[arg(long)]
+    pub warmup_time: Option<f64>,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub mean_workload: f64,
+
+    #[arg(long, default_value_t = false)]
+    pub record_state_trace: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub save_event_log: bool,
+
+    #[arg(long, default_value = "results")]
+    pub output_root: String,
 }
 
-fn save_suite_json(result: &ExperimentSuiteResult, output_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    fs::create_dir_all(output_dir)?;
-    let path = output_dir.join("suite_result.json");
-    let body = serde_json::to_string_pretty(result)?;
-    fs::write(&path, body)?;
-    Ok(path)
+#[derive(Debug, Clone, Args)]
+pub struct SuiteArgs {
+    #[arg(long, value_enum, default_value_t = ScenarioFamily::Default)]
+    pub scenario_family: ScenarioFamily,
+
+    #[arg(long, default_value = "experiment_suite")]
+    pub suite_name: String,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub mean_workload: f64,
+
+    #[arg(long)]
+    pub replications: Option<usize>,
+
+    #[arg(long)]
+    pub max_time: Option<f64>,
+
+    #[arg(long)]
+    pub warmup_time: Option<f64>,
+
+    #[arg(long, default_value_t = 0.95)]
+    pub ci_level: f64,
+
+    #[arg(long, default_value_t = false)]
+    pub record_state_trace: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub save_event_log: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub keep_full_run_results: bool,
+
+    #[arg(long, default_value = "results")]
+    pub output_root: String,
 }
 
-fn save_suite_csv_and_txt(result: &ExperimentSuiteResult, output_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all(output_dir)?;
+#[derive(Debug, Clone, Args)]
+pub struct PlotsArgs {
+    #[arg(long)]
+    pub input: String,
 
-    let agg = aggregated_rows(result);
-    let runs = all_run_rows(result);
+    #[arg(long)]
+    pub output_dir: Option<String>,
 
-    write_csv_rows(&output_dir.join("aggregated_summary.csv"), &agg)?;
-    write_csv_rows(&output_dir.join("all_runs.csv"), &runs)?;
+    #[arg(long, default_value_t = 200)]
+    pub dpi: u32,
 
-    let mut txt = String::new();
-    txt.push_str("Краткий отчёт по серии экспериментов\n");
-    txt.push_str("==================================\n\n");
-    txt.push_str(&format!("suite_name: {}\n", result.suite_name));
-    txt.push_str(&format!("created_at: {}\n\n", result.created_at));
-    for s in &result.scenarios {
-        txt.push_str(&format!(
-            "- {}: throughput={:.6}, loss_probability={:.6}, mean_num_jobs={:.6}\n",
-            s.scenario_name, s.throughput.mean, s.loss_probability.mean, s.mean_num_jobs.mean
-        ));
-    }
-    fs::write(output_dir.join("suite_report.txt"), txt)?;
-
-    let mut md = String::new();
-    md.push_str("# Suite report\n\n");
-    md.push_str(&format!("- suite_name: **{}**\n", result.suite_name));
-    md.push_str(&format!("- created_at: **{}**\n\n", result.created_at));
-    md.push_str("## Scenarios\n");
-    for s in &result.scenarios {
-        md.push_str(&format!(
-            "- **{}**: throughput `{:.6}`, loss_probability `{:.6}`, mean_num_jobs `{:.6}`\n",
-            s.scenario_name, s.throughput.mean, s.loss_probability.mean, s.mean_num_jobs.mean
-        ));
-    }
-    fs::write(output_dir.join("suite_report.md"), md)?;
-
-    Ok(())
+    #[arg(long)]
+    pub metrics: Vec<String>,
 }
 
-fn save_single_json(result: &crate::simulation::SimulationRunResult, output_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    fs::create_dir_all(output_dir)?;
-    let path = output_dir.join("single_run_result.json");
-    fs::write(&path, serde_json::to_string_pretty(result)?)?;
+#[derive(Debug, Clone, Args)]
+pub struct FullArgs {
+    #[arg(long, value_enum, default_value_t = ScenarioFamily::Default)]
+    pub scenario_family: ScenarioFamily,
 
-    let md = format!(
-        "# Single run\n\n- scenario: **{}**\n- replication: **{}**\n- throughput: `{:.6}`\n- loss_probability: `{:.6}`\n- mean_num_jobs: `{:.6}`\n",
-        result.scenario_name, result.replication_index, result.throughput, result.loss_probability, result.mean_num_jobs
+    #[arg(long, default_value = "full_pipeline")]
+    pub suite_name: String,
+
+    #[arg(long, default_value_t = 1.0)]
+    pub mean_workload: f64,
+
+    #[arg(long)]
+    pub replications: Option<usize>,
+
+    #[arg(long)]
+    pub max_time: Option<f64>,
+
+    #[arg(long)]
+    pub warmup_time: Option<f64>,
+
+    #[arg(long, default_value_t = 0.95)]
+    pub ci_level: f64,
+
+    #[arg(long, default_value_t = false)]
+    pub record_state_trace: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub save_event_log: bool,
+
+    #[arg(long, default_value_t = false)]
+    pub keep_full_run_results: bool,
+
+    #[arg(long, default_value = "results")]
+    pub output_root: String,
+
+    #[arg(long, default_value_t = 200)]
+    pub dpi: u32,
+
+    #[arg(long)]
+    pub metrics: Vec<String>,
+}
+
+fn timestamp() -> String {
+    Local::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+fn ensure_dir(path: impl AsRef<Path>) -> Result<PathBuf> {
+    let path_obj = path.as_ref().to_path_buf();
+    fs::create_dir_all(&path_obj)?;
+    Ok(path_obj)
+}
+
+fn make_run_root(base_dir: impl AsRef<Path>, prefix: &str) -> Result<PathBuf> {
+    ensure_dir(base_dir.as_ref().join(prefix).join(timestamp()))
+}
+
+fn override_simulation_config(
+    scenario: &ScenarioConfig,
+    max_time: Option<f64>,
+    warmup_time: Option<f64>,
+    replications: Option<usize>,
+    record_state_trace: bool,
+    save_event_log: bool,
+) -> ScenarioConfig {
+    let mut updated = scenario.clone();
+
+    if let Some(v) = max_time {
+        updated.simulation.max_time = v;
+    }
+    if let Some(v) = warmup_time {
+        updated.simulation.warmup_time = v;
+    }
+    if let Some(v) = replications {
+        updated.simulation.replications = v;
+    }
+    if record_state_trace {
+        updated.simulation.record_state_trace = true;
+    }
+    if save_event_log {
+        updated.simulation.save_event_log = true;
+    }
+
+    updated
+}
+
+fn save_single_run_result(
+    result: &SimulationRunResult,
+    output_dir: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    let out_dir = ensure_dir(output_dir)?;
+    let out_path = out_dir.join("single_run_result.json");
+    fs::write(&out_path, serde_json::to_string_pretty(result)?)?;
+    Ok(out_path)
+}
+
+fn format_metric<T: ToString>(value: T) -> String {
+    value.to_string()
+}
+
+fn save_markdown_report(lines: &[String], output_path: impl AsRef<Path>) -> Result<PathBuf> {
+    let out = output_path.as_ref().to_path_buf();
+    let mut body = lines.join("\n");
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    fs::write(&out, body)?;
+    Ok(out)
+}
+
+fn save_single_run_report(
+    result: &SimulationRunResult,
+    scenario: &ScenarioConfig,
+    args: &SingleArgs,
+    output_root: impl AsRef<Path>,
+    json_path: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    let output_root = output_root.as_ref();
+    let json_path = json_path.as_ref();
+
+    let key_metrics = [
+        ("Наблюдаемое время", format!("{:.6}", result.observed_time)),
+        (
+            "Среднее число заявок",
+            format!("{:.6}", result.mean_num_jobs),
+        ),
+        (
+            "Средний занятый ресурс",
+            format!("{:.6}", result.mean_occupied_resource),
+        ),
+        (
+            "Попытки поступления",
+            format_metric(result.arrival_attempts),
+        ),
+        ("Принятые заявки", format_metric(result.accepted_arrivals)),
+        ("Отказы", format_metric(result.rejected_arrivals)),
+        ("Завершённые заявки", format_metric(result.completed_jobs)),
+        (
+            "Вероятность отказа",
+            format!("{:.6}", result.loss_probability),
+        ),
+        (
+            "Пропускная способность",
+            format!("{:.6}", result.throughput),
+        ),
+    ];
+
+    let mut lines = vec![
+        "# Отчёт по одному прогону".to_string(),
+        "".to_string(),
+        "## Что запускалось".to_string(),
+        format!("- Сценарий: **{}**.", scenario.name),
+        format!("- Replication index: **{}**.", result.replication_index),
+        format!("- Seed: **{}**.", result.seed),
+        format!(
+            "- Время моделирования: **{}**, warm-up: **{}**.",
+            result.total_time, result.warmup_time
+        ),
+        "".to_string(),
+        "## Текстовое описание результата".to_string(),
+        "Прогон завершён успешно. Ниже собраны ключевые показатели.".to_string(),
+        "".to_string(),
+        "## Ключевые метрики".to_string(),
+    ];
+
+    for (name, value) in key_metrics {
+        lines.push(format!("- {}: **{}**.", name, value));
+    }
+
+    lines.extend([
+        "".to_string(),
+        "## Где лежат артефакты".to_string(),
+        format!("- JSON с полным результатом: `{}`.", json_path.display()),
+        format!("- Папка прогона: `{}`.", output_root.display()),
+        "".to_string(),
+        "## Параметры запуска CLI".to_string(),
+        format!(
+            "- max_time={:?}, warmup_time={:?}, record_state_trace={}, save_event_log={}.",
+            args.max_time, args.warmup_time, args.record_state_trace, args.save_event_log
+        ),
+    ]);
+
+    save_markdown_report(&lines, output_root.join("single_run_report.md"))
+}
+
+fn save_suite_report(
+    suite_result: &ExperimentSuiteResult,
+    output_root: impl AsRef<Path>,
+    suite_dir: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    let output_root = output_root.as_ref();
+    let suite_dir = suite_dir.as_ref();
+
+    let mut lines = vec![
+        "# Отчёт по серии экспериментов".to_string(),
+        "".to_string(),
+        "## Что произошло".to_string(),
+        "Серия прогонов выполнена. В этом отчёте собраны агрегированные итоги по каждому сценарию."
+            .to_string(),
+        "".to_string(),
+        "## Общая информация".to_string(),
+        format!("- Имя серии: **{}**.", suite_result.suite_name),
+        format!("- Время формирования: **{}**.", suite_result.created_at),
+        format!(
+            "- Число сценариев: **{}**.",
+            suite_result.scenario_results.len()
+        ),
+        "".to_string(),
+        "## Итоги по сценариям".to_string(),
+    ];
+
+    for (scenario_key, result) in &suite_result.scenario_results {
+        lines.push(format!("### {}", scenario_key));
+        lines.push(format!("- Описание: {}.", result.scenario_description));
+        lines.push(format!("- Replications: **{}**.", result.replications));
+
+        for metric_name in [
+            "throughput",
+            "loss_probability",
+            "mean_num_jobs",
+            "mean_occupied_resource",
+        ] {
+            if let Some(summary) = result.metric_summaries.get(metric_name) {
+                lines.push(format!(
+                    "- {}: mean={:.6}, 95% CI=[{:.6}, {:.6}].",
+                    metric_name, summary.mean, summary.ci_low, summary.ci_high
+                ));
+            }
+        }
+
+        lines.push(String::new());
+    }
+
+    lines.extend([
+        "## Где лежат артефакты".to_string(),
+        format!("- Папка серии: `{}`.", suite_dir.display()),
+        format!(
+            "- Таблицы/JSON: `{}`, `{}`, `{}`.",
+            suite_dir.join("aggregated_summary.csv").display(),
+            suite_dir.join("all_runs.csv").display(),
+            suite_dir.join("suite_result.json").display()
+        ),
+    ]);
+
+    save_markdown_report(&lines, output_root.join("suite_report.md"))
+}
+
+fn save_plots_report(
+    suite_data: &PlotSuiteData,
+    input_path: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+) -> Result<PathBuf> {
+    let input_path = input_path.as_ref();
+    let output_dir = output_dir.as_ref();
+
+    let png_count = fs::read_dir(output_dir)?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|s| s.eq_ignore_ascii_case("png"))
+                .unwrap_or(false)
+        })
+        .count();
+
+    let lines = vec![
+        "# Отчёт по построению графиков".to_string(),
+        "".to_string(),
+        "## Что произошло".to_string(),
+        "Графики успешно построены на основании сохранённых результатов серии.".to_string(),
+        "".to_string(),
+        "## Источник данных".to_string(),
+        format!("- Вход: `{}`.", input_path.display()),
+        format!("- Набор: **{}**.", suite_data.suite_name),
+        format!("- Создан: **{}**.", suite_data.created_at),
+        format!("- Сценариев: **{}**.", suite_data.scenario_results.len()),
+        "".to_string(),
+        "## Результат".to_string(),
+        format!("- Папка графиков: `{}`.", output_dir.display()),
+        format!("- Найдено PNG-файлов после генерации: **{}**.", png_count),
+    ];
+
+    let parent = output_dir.parent().unwrap_or(output_dir);
+    save_markdown_report(&lines, parent.join("plots_report.md"))
+}
+
+fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
+    let workloads = standard_workload_family(args.mean_workload)?;
+    let workload = workloads
+        .get("exponential")
+        .cloned()
+        .ok_or_else(|| RunError::Validation("Не найден workload 'exponential'".to_string()))?;
+
+    let base = crate::params::build_base_scenario(workload, "")?;
+    let scenario = override_simulation_config(
+        &base,
+        args.max_time,
+        args.warmup_time,
+        None,
+        args.record_state_trace,
+        args.save_event_log,
     );
-    fs::write(output_dir.join("single_run_report.md"), md)?;
-
-    Ok(path)
+    scenario.validate()?;
+    Ok(scenario)
 }
 
-fn generate_plots_from_suite(result: &ExperimentSuiteResult, output_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    fs::create_dir_all(output_dir)?;
-    plot_metric_bar(&result.scenarios, "throughput", &output_dir.join("metric_throughput.png"))?;
-    plot_metric_bar(&result.scenarios, "loss_probability", &output_dir.join("metric_loss_probability.png"))?;
-    plot_metric_bar(&result.scenarios, "mean_num_jobs", &output_dir.join("metric_mean_num_jobs.png"))?;
+fn build_suite_scenarios(
+    args: &SuiteArgs,
+) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let scenarios = match args.scenario_family {
+        ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+    };
 
-    if let Some(first) = result.scenarios.first().and_then(|s| s.runs.first()) {
-        plot_stationary_distribution(&first.pi_hat, &output_dir.join("stationary_distribution.png"))?;
+    let mut updated = std::collections::BTreeMap::new();
+    for (key, scenario) in scenarios {
+        let modified = override_simulation_config(
+            &scenario,
+            args.max_time,
+            args.warmup_time,
+            args.replications,
+            args.record_state_trace,
+            args.save_event_log,
+        );
+        modified.validate()?;
+        updated.insert(key, modified);
     }
 
-    fs::write(
-        output_dir.join("plots_report.md"),
-        "# Plots report\n\nГрафики построены успешно.\n",
+    Ok(updated)
+}
+
+fn build_full_scenarios(
+    args: &FullArgs,
+) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let scenarios = match args.scenario_family {
+        ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+    };
+
+    let mut updated = std::collections::BTreeMap::new();
+    for (key, scenario) in scenarios {
+        let modified = override_simulation_config(
+            &scenario,
+            args.max_time,
+            args.warmup_time,
+            args.replications,
+            args.record_state_trace,
+            args.save_event_log,
+        );
+        modified.validate()?;
+        updated.insert(key, modified);
+    }
+
+    Ok(updated)
+}
+
+pub fn run_single_mode(args: &SingleArgs) -> Result<PathBuf> {
+    let scenario = build_single_scenario(args)?;
+    print_scenario_summary(&scenario)?;
+
+    let result = simulate_one_run(scenario.clone(), args.replication_index, args.seed)?;
+    print_run_summary(&result);
+
+    let output_root = make_run_root(&args.output_root, "single_runs")?;
+    let json_path = save_single_run_result(&result, &output_root)?;
+    let report_path = save_single_run_report(&result, &scenario, args, &output_root, &json_path)?;
+
+    println!("{}", "=".repeat(80));
+    println!(
+        "Результат одного прогона сохранён в: {}",
+        json_path.display()
+    );
+    println!("Markdown-отчёт сохранён в: {}", report_path.display());
+    println!("{}", "=".repeat(80));
+
+    Ok(output_root)
+}
+
+pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
+    let scenarios = build_suite_scenarios(args)?;
+    let suite_result = run_experiment_suite(
+        &scenarios,
+        &args.suite_name,
+        args.ci_level,
+        args.keep_full_run_results,
     )?;
 
-    Ok(())
+    print_experiment_suite_summary(&suite_result, None);
+
+    let output_root = make_run_root(&args.output_root, "experiments")?;
+    let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
+    let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
+
+    println!("{}", "=".repeat(80));
+    println!(
+        "Результаты серии экспериментов сохранены в: {}",
+        suite_dir.display()
+    );
+    println!("Markdown-отчёт сохранён в: {}", report_path.display());
+    println!("{}", "=".repeat(80));
+
+    Ok(output_root)
 }
 
-pub fn cli_entry() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
-    let command = cli.command.unwrap_or(Commands::Full {
-        mean_workload: 1.0,
-        replications: 10,
-        output_dir: PathBuf::from("results_rust"),
-    });
+pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
+    let suite_data = load_suite_data(&args.input)?;
+    let json_path = resolve_suite_result_json(&args.input)?;
 
-    match command {
-        Commands::Single {
-            mean_workload,
-            replication_index,
-            seed,
-            output_dir,
-        } => {
-            let scenario = build_base_scenario(mean_workload);
-            scenario.validate().map_err(|e| format!("Scenario validation error: {e}"))?;
-            let result = simulate_one_run(&scenario, replication_index, seed);
-            let path = save_single_json(&result, &output_dir)?;
-            println!("single result saved: {}", path.display());
+    let output_dir = if let Some(out) = &args.output_dir {
+        PathBuf::from(out)
+    } else {
+        json_path.parent().unwrap_or(Path::new(".")).join("plots")
+    };
+
+    let metric_refs: Vec<&str> = args.metrics.iter().map(String::as_str).collect();
+    let extra_metrics = if metric_refs.is_empty() {
+        None
+    } else {
+        Some(metric_refs.as_slice())
+    };
+
+    let _created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
+
+    println!("{}", "=".repeat(80));
+    println!("Папка с графиками: {}", output_dir.display());
+
+    let report_path = save_plots_report(&suite_data, &args.input, &output_dir)?;
+    println!("Markdown-отчёт сохранён в: {}", report_path.display());
+    println!("{}", "=".repeat(80));
+
+    Ok(output_dir)
+}
+
+pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
+    let scenarios = build_full_scenarios(args)?;
+    let suite_result = run_experiment_suite(
+        &scenarios,
+        &args.suite_name,
+        args.ci_level,
+        args.keep_full_run_results,
+    )?;
+
+    print_experiment_suite_summary(&suite_result, None);
+
+    let suite_dir = make_run_root(&args.output_root, "experiments")?;
+    let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
+
+    let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;
+
+    let suite_data = load_suite_data(&suite_dir)?;
+    let plots_dir = suite_dir.join("plots");
+
+    let metric_refs: Vec<&str> = args.metrics.iter().map(String::as_str).collect();
+    let extra_metrics = if metric_refs.is_empty() {
+        None
+    } else {
+        Some(metric_refs.as_slice())
+    };
+
+    let _created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir)?;
+
+    println!("{}", "=".repeat(80));
+    println!("Полный запуск завершён.");
+    println!("Результаты серии: {}", suite_dir.display());
+    println!("Графики: {}", plots_dir.display());
+    println!("Markdown-отчёт по серии: {}", suite_report_path.display());
+    println!(
+        "Markdown-отчёт по графикам: {}",
+        plots_report_path.display()
+    );
+    println!("{}", "=".repeat(80));
+
+    Ok(suite_dir)
+}
+
+pub fn cli_entry() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Single(args) => {
+            run_single_mode(&args)?;
         }
-        Commands::Suite {
-            mean_workload,
-            replications,
-            output_dir,
-        } => {
-            let mut base = build_base_scenario(mean_workload);
-            base.simulation.replications = replications;
-            base.validate().map_err(|e| format!("Scenario validation error: {e}"))?;
-            let suite = run_experiment_suite(&[base], "suite_rust");
-            let path = save_suite_json(&suite, &output_dir)?;
-            save_suite_csv_and_txt(&suite, &output_dir)?;
-            println!("suite result saved: {}", path.display());
+        Commands::Suite(args) => {
+            run_suite_mode(&args)?;
         }
-        Commands::Plots {
-            suite_json,
-            output_dir,
-        } => {
-            let data = fs::read_to_string(&suite_json)?;
-            let suite: ExperimentSuiteResult = serde_json::from_str(&data)?;
-            generate_plots_from_suite(&suite, &output_dir)?;
-            println!("plots saved to: {}", output_dir.display());
+        Commands::Plots(args) => {
+            run_plots_mode(&args)?;
         }
-        Commands::Full {
-            mean_workload,
-            replications,
-            output_dir,
-        } => {
-            let mut base = build_base_scenario(mean_workload);
-            base.simulation.replications = replications;
-            base.validate().map_err(|e| format!("Scenario validation error: {e}"))?;
-            let suite = run_experiment_suite(&[base], "full_rust");
-            let json_path = save_suite_json(&suite, &output_dir)?;
-            save_suite_csv_and_txt(&suite, &output_dir)?;
-            let plots_dir = output_dir.join("plots");
-            generate_plots_from_suite(&suite, &plots_dir)?;
-            println!("full done: {}, {}", json_path.display(), plots_dir.display());
+        Commands::Full(args) => {
+            run_full_mode(&args)?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_simulation_config_works() {
+        let workloads = standard_workload_family(1.0).unwrap();
+        let workload = workloads.get("exponential").unwrap().clone();
+        let base = crate::params::build_base_scenario(workload, "").unwrap();
+
+        let updated =
+            override_simulation_config(&base, Some(123.0), Some(12.0), Some(7), true, true);
+
+        assert_eq!(updated.simulation.max_time, 123.0);
+        assert_eq!(updated.simulation.warmup_time, 12.0);
+        assert_eq!(updated.simulation.replications, 7);
+        assert!(updated.simulation.record_state_trace);
+        assert!(updated.simulation.save_event_log);
+    }
+
+    #[test]
+    fn timestamp_is_nonempty() {
+        assert!(!timestamp().is_empty());
+    }
 }

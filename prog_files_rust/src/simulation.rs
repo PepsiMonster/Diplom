@@ -1,10 +1,81 @@
+use std::collections::BTreeMap;
+use std::f64::INFINITY;
+
+use rand::distributions::{Distribution as RandDistribution, WeightedIndex};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rand_distr::{Distribution, Exp};
+use rand_distr::{Exp, Gamma};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use thiserror::Error;
 
-use crate::model::{RejectionReason, SystemState};
-use crate::params::ScenarioConfig;
+use crate::model::{AdmissionDecision, ModelError, RejectionReason, SystemState, COMPLETION_TOL};
+use crate::params::{
+    build_base_scenario, standard_workload_family, ParamsError, ResourceDistributionConfig,
+    ScenarioConfig, SimulationConfig, WorkloadDistributionConfig,
+};
+
+#[derive(Debug, Error)]
+pub enum SimulationError {
+    #[error("{0}")]
+    Validation(String),
+
+    #[error(transparent)]
+    Model(#[from] ModelError),
+
+    #[error(transparent)]
+    Params(#[from] ParamsError),
+}
+
+type Result<T> = std::result::Result<T, SimulationError>;
+
+fn ensure_nonnegative_f64(name: &str, value: f64) -> Result<()> {
+    if value < 0.0 {
+        return Err(SimulationError::Validation(format!(
+            "Параметр '{name}' должен быть >= 0, получено: {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_positive_f64(name: &str, value: f64) -> Result<()> {
+    if value <= 0.0 {
+        return Err(SimulationError::Validation(format!(
+            "Параметр '{name}' должен быть > 0, получено: {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_positive_usize(name: &str, value: usize) -> Result<()> {
+    if value == 0 {
+        return Err(SimulationError::Validation(format!(
+            "Параметр '{name}' должен быть > 0, получено: {value}"
+        )));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateSnapshot {
+    pub time: f64,
+    pub num_jobs: usize,
+    pub occupied_resource: u32,
+    pub arrival_rate: f64,
+    pub service_speed: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventRecord {
+    pub time: f64,
+    pub event_type: String,
+    pub job_id: Option<u64>,
+    pub num_jobs_before: usize,
+    pub num_jobs_after: usize,
+    pub occupied_resource_before: u32,
+    pub occupied_resource_after: u32,
+    pub details: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationRunResult {
@@ -13,129 +84,781 @@ pub struct SimulationRunResult {
     pub seed: u64,
     pub total_time: f64,
     pub warmup_time: f64,
+    pub observed_time: f64,
+    pub state_times: Vec<f64>,
+    pub pi_hat: Vec<f64>,
     pub mean_num_jobs: f64,
     pub mean_occupied_resource: f64,
+    pub arrival_attempts: u64,
     pub accepted_arrivals: u64,
     pub rejected_arrivals: u64,
     pub rejected_capacity: u64,
     pub rejected_server: u64,
     pub rejected_resource: u64,
     pub completed_jobs: u64,
-    pub throughput: f64,
     pub loss_probability: f64,
-    pub pi_hat: Vec<f64>,
+    pub throughput: f64,
+    pub state_trace: Vec<StateSnapshot>,
+    pub event_log: Vec<EventRecord>,
 }
 
-pub fn derive_seed(base_seed: u64, replication_index: usize) -> u64 {
-    base_seed ^ (replication_index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+impl SimulationRunResult {
+    pub fn flat_summary(&self) -> BTreeMap<String, Value> {
+        let mut summary = BTreeMap::new();
+
+        summary.insert("scenario_name".to_string(), json!(self.scenario_name));
+        summary.insert(
+            "replication_index".to_string(),
+            json!(self.replication_index),
+        );
+        summary.insert("seed".to_string(), json!(self.seed));
+        summary.insert("total_time".to_string(), json!(self.total_time));
+        summary.insert("warmup_time".to_string(), json!(self.warmup_time));
+        summary.insert("observed_time".to_string(), json!(self.observed_time));
+        summary.insert("mean_num_jobs".to_string(), json!(self.mean_num_jobs));
+        summary.insert(
+            "mean_occupied_resource".to_string(),
+            json!(self.mean_occupied_resource),
+        );
+        summary.insert("arrival_attempts".to_string(), json!(self.arrival_attempts));
+        summary.insert(
+            "accepted_arrivals".to_string(),
+            json!(self.accepted_arrivals),
+        );
+        summary.insert(
+            "rejected_arrivals".to_string(),
+            json!(self.rejected_arrivals),
+        );
+        summary.insert(
+            "rejected_capacity".to_string(),
+            json!(self.rejected_capacity),
+        );
+        summary.insert("rejected_server".to_string(), json!(self.rejected_server));
+        summary.insert(
+            "rejected_resource".to_string(),
+            json!(self.rejected_resource),
+        );
+        summary.insert("completed_jobs".to_string(), json!(self.completed_jobs));
+        summary.insert("loss_probability".to_string(), json!(self.loss_probability));
+        summary.insert("throughput".to_string(), json!(self.throughput));
+
+        for (k, value) in self.pi_hat.iter().enumerate() {
+            summary.insert(format!("pi_hat_{k}"), json!(value));
+        }
+
+        summary
+    }
 }
 
-pub fn simulate_one_run(scenario: &ScenarioConfig, replication_index: usize, seed_override: Option<u64>) -> SimulationRunResult {
-    let seed = seed_override.unwrap_or_else(|| derive_seed(scenario.simulation.seed, replication_index));
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut state = SystemState::new();
+pub fn derive_run_seed(base_seed: u64, replication_index: usize) -> u64 {
+    base_seed.wrapping_add(1_000_003u64.wrapping_mul(replication_index as u64))
+}
 
-    let mut state_times = vec![0.0_f64; scenario.capacity_k + 1];
-    let mut accepted_arrivals = 0_u64;
-    let mut rejected_arrivals = 0_u64;
-    let mut rejected_capacity = 0_u64;
-    let mut rejected_server = 0_u64;
-    let mut rejected_resource = 0_u64;
-    let mut completed_jobs = 0_u64;
+pub fn interval_overlap_length(a0: f64, a1: f64, b0: f64, b1: f64) -> f64 {
+    let left = a0.max(b0);
+    let right = a1.min(b1);
+    (right - left).max(0.0)
+}
 
-    let mut area_num_jobs = 0.0_f64;
-    let mut area_resource = 0.0_f64;
+pub fn sample_resource_demand(
+    rng: &mut StdRng,
+    config: &ResourceDistributionConfig,
+) -> Result<u32> {
+    config.validate()?;
 
-    while state.current_time < scenario.simulation.max_time {
-        let k = state.num_jobs().min(scenario.capacity_k);
-        let arrival_rate = scenario.arrival_rate_by_state[k].max(0.0);
-        let service_speed = scenario.service_speed_by_state[k].max(0.0);
+    match config {
+        ResourceDistributionConfig::Deterministic {
+            deterministic_value,
+        } => Ok(*deterministic_value),
+        ResourceDistributionConfig::DiscreteUniform {
+            min_units,
+            max_units,
+        } => Ok(rng.gen_range(*min_units..=*max_units)),
+        ResourceDistributionConfig::DiscreteCustom {
+            values,
+            probabilities,
+        } => {
+            let dist = WeightedIndex::new(probabilities).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Некорректные probabilities для discrete_custom: {e}"
+                ))
+            })?;
+            let idx = dist.sample(rng);
+            Ok(values[idx])
+        }
+    }
+}
 
-        let arrival_dt = if arrival_rate > 0.0 {
-            Exp::new(arrival_rate).unwrap().sample(&mut rng)
-        } else {
-            f64::INFINITY
-        };
+pub fn sample_workload(rng: &mut StdRng, config: &WorkloadDistributionConfig) -> Result<f64> {
+    config.validate()?;
 
-        let completion_dt = if state.active_jobs.is_empty() || service_speed <= 0.0 {
-            f64::INFINITY
-        } else {
-            state
-                .active_jobs
-                .iter()
-                .map(|j| j.remaining_workload / service_speed)
-                .fold(f64::INFINITY, f64::min)
-        };
+    match config {
+        WorkloadDistributionConfig::Deterministic { mean, .. } => Ok(*mean),
 
-        let dt = arrival_dt.min(completion_dt);
-        if !dt.is_finite() || dt <= 0.0 {
-            break;
+        WorkloadDistributionConfig::Exponential { mean, .. } => {
+            let rate = 1.0 / *mean;
+            let dist = Exp::new(rate).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Exp(rate={rate}) для workload: {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
         }
 
-        let t0 = state.current_time;
-        let t1 = (t0 + dt).min(scenario.simulation.max_time);
-        let dt_effective = t1 - t0;
-
-        if t1 > scenario.simulation.warmup_time {
-            let left = t0.max(scenario.simulation.warmup_time);
-            let observed_dt = (t1 - left).max(0.0);
-            if observed_dt > 0.0 {
-                area_num_jobs += state.num_jobs() as f64 * observed_dt;
-                area_resource += state.occupied_resource_total as f64 * observed_dt;
-                state_times[k] += observed_dt;
-            }
+        WorkloadDistributionConfig::Erlang {
+            mean, erlang_order, ..
+        } => {
+            let shape = *erlang_order as f64;
+            let scale = *mean / shape;
+            let dist = Gamma::new(shape, scale).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Gamma(shape={shape}, scale={scale}) для Erlang: {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
         }
 
-        let finished = state.advance_and_complete(dt_effective, service_speed);
-        completed_jobs += finished as u64;
+        WorkloadDistributionConfig::Hyperexponential2 {
+            hyper_p,
+            hyper_rates,
+            ..
+        } => {
+            let branch_first = rng.gen_bool(*hyper_p);
+            let rate = if branch_first {
+                hyper_rates[0]
+            } else {
+                hyper_rates[1]
+            };
+            let dist = Exp::new(rate).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Exp(rate={rate}) для HyperExp(2): {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
+        }
+    }
+}
 
-        if (arrival_dt - dt).abs() <= 1e-12 {
-            let resource = rng.gen_range(1..=3) as u32;
-            let workload = Exp::new(1.0 / scenario.mean_workload.max(1e-9)).unwrap().sample(&mut rng);
-            match state.can_accept(resource, scenario) {
-                Ok(()) => {
-                    state.add_job(resource, workload.max(1e-9));
-                    accepted_arrivals += 1;
-                }
-                Err(reason) => {
-                    rejected_arrivals += 1;
-                    match reason {
-                        RejectionReason::Capacity => rejected_capacity += 1,
-                        RejectionReason::Servers => rejected_server += 1,
-                        RejectionReason::Resource => rejected_resource += 1,
-                    }
-                }
-            }
+pub fn sample_next_arrival_delta(
+    rng: &mut StdRng,
+    state: &SystemState,
+    scenario: &ScenarioConfig,
+) -> Result<f64> {
+    let current_rate = state.current_arrival_rate(scenario);
+    if current_rate <= 0.0 {
+        return Ok(INFINITY);
+    }
+
+    let dist = Exp::new(current_rate).map_err(|e| {
+        SimulationError::Validation(format!(
+            "Не удалось создать Exp(rate={current_rate}) для следующего поступления: {e}"
+        ))
+    })?;
+    Ok(dist.sample(rng))
+}
+
+#[derive(Debug, Clone)]
+pub struct StatisticsAccumulator {
+    pub capacity_k: usize,
+    pub total_time: f64,
+    pub warmup_time: f64,
+    pub state_times: Vec<f64>,
+    pub resource_time_integral: f64,
+    pub arrival_attempts: u64,
+    pub accepted_arrivals: u64,
+    pub rejected_arrivals: u64,
+    pub rejected_capacity: u64,
+    pub rejected_server: u64,
+    pub rejected_resource: u64,
+    pub completed_jobs: u64,
+}
+
+impl StatisticsAccumulator {
+    pub fn new(capacity_k: usize, total_time: f64, warmup_time: f64) -> Result<Self> {
+        ensure_positive_usize("capacity_k", capacity_k)?;
+        ensure_positive_f64("total_time", total_time)?;
+        ensure_nonnegative_f64("warmup_time", warmup_time)?;
+
+        Ok(Self {
+            capacity_k,
+            total_time,
+            warmup_time,
+            state_times: vec![0.0; capacity_k + 1],
+            resource_time_integral: 0.0,
+            arrival_attempts: 0,
+            accepted_arrivals: 0,
+            rejected_arrivals: 0,
+            rejected_capacity: 0,
+            rejected_server: 0,
+            rejected_resource: 0,
+            completed_jobs: 0,
+        })
+    }
+
+    pub fn observed_time(&self) -> f64 {
+        self.total_time - self.warmup_time
+    }
+
+    pub fn is_in_observation_window(&self, time_point: f64) -> bool {
+        self.warmup_time <= time_point && time_point <= self.total_time
+    }
+
+    pub fn observe_constant_interval(
+        &mut self,
+        t0: f64,
+        t1: f64,
+        num_jobs: usize,
+        occupied_resource: u32,
+    ) -> Result<()> {
+        if t1 < t0 {
+            return Err(SimulationError::Validation(format!(
+                "Ожидалось t1 >= t0, получено t0={t0}, t1={t1}"
+            )));
+        }
+        if t1 == t0 {
+            return Ok(());
+        }
+        if num_jobs > self.capacity_k {
+            return Err(SimulationError::Validation(format!(
+                "num_jobs={} превышает capacity_k={}",
+                num_jobs, self.capacity_k
+            )));
+        }
+
+        let overlap = interval_overlap_length(t0, t1, self.warmup_time, self.total_time);
+        if overlap <= 0.0 {
+            return Ok(());
+        }
+
+        self.state_times[num_jobs] += overlap;
+        self.resource_time_integral += occupied_resource as f64 * overlap;
+        Ok(())
+    }
+
+    pub fn register_arrival_attempt(&mut self, event_time: f64) {
+        if self.is_in_observation_window(event_time) {
+            self.arrival_attempts += 1;
         }
     }
 
-    let observed_time = (scenario.simulation.max_time - scenario.simulation.warmup_time).max(1e-9);
-    let total_arrivals = accepted_arrivals + rejected_arrivals;
-    let throughput = completed_jobs as f64 / observed_time;
-    let loss_probability = if total_arrivals == 0 {
-        0.0
-    } else {
-        rejected_arrivals as f64 / total_arrivals as f64
+    pub fn register_admission(&mut self, event_time: f64) {
+        if self.is_in_observation_window(event_time) {
+            self.accepted_arrivals += 1;
+        }
+    }
+
+    pub fn register_rejection(&mut self, event_time: f64, reason: RejectionReason) {
+        if !self.is_in_observation_window(event_time) {
+            return;
+        }
+
+        self.rejected_arrivals += 1;
+        match reason {
+            RejectionReason::CapacityLimit => self.rejected_capacity += 1,
+            RejectionReason::ServerLimit => self.rejected_server += 1,
+            RejectionReason::ResourceLimit => self.rejected_resource += 1,
+            RejectionReason::None => {}
+        }
+    }
+
+    pub fn register_departure(&mut self, event_time: f64) {
+        if self.is_in_observation_window(event_time) {
+            self.completed_jobs += 1;
+        }
+    }
+
+    pub fn build_result(
+        self,
+        scenario_name: String,
+        replication_index: usize,
+        seed: u64,
+        state_trace: Vec<StateSnapshot>,
+        event_log: Vec<EventRecord>,
+    ) -> Result<SimulationRunResult> {
+        let observed_time = self.observed_time();
+        if observed_time <= 0.0 {
+            return Err(SimulationError::Validation(format!(
+                "observed_time должно быть > 0, получено: {observed_time}. Проверь max_time и warmup_time."
+            )));
+        }
+
+        let pi_hat: Vec<f64> = self
+            .state_times
+            .iter()
+            .map(|time_in_state| time_in_state / observed_time)
+            .collect();
+
+        let mean_num_jobs = pi_hat
+            .iter()
+            .enumerate()
+            .map(|(k, p)| k as f64 * *p)
+            .sum::<f64>();
+
+        let mean_occupied_resource = self.resource_time_integral / observed_time;
+        let loss_probability = if self.arrival_attempts > 0 {
+            self.rejected_arrivals as f64 / self.arrival_attempts as f64
+        } else {
+            0.0
+        };
+        let throughput = self.completed_jobs as f64 / observed_time;
+
+        Ok(SimulationRunResult {
+            scenario_name,
+            replication_index,
+            seed,
+            total_time: self.total_time,
+            warmup_time: self.warmup_time,
+            observed_time,
+            state_times: self.state_times,
+            pi_hat,
+            mean_num_jobs,
+            mean_occupied_resource,
+            arrival_attempts: self.arrival_attempts,
+            accepted_arrivals: self.accepted_arrivals,
+            rejected_arrivals: self.rejected_arrivals,
+            rejected_capacity: self.rejected_capacity,
+            rejected_server: self.rejected_server,
+            rejected_resource: self.rejected_resource,
+            completed_jobs: self.completed_jobs,
+            loss_probability,
+            throughput,
+            state_trace,
+            event_log,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct SingleRunSimulator {
+    pub scenario: ScenarioConfig,
+    pub replication_index: usize,
+    pub seed: u64,
+    pub rng: StdRng,
+    pub state: SystemState,
+    pub stats: StatisticsAccumulator,
+    pub state_trace: Vec<StateSnapshot>,
+    pub event_log: Vec<EventRecord>,
+}
+
+impl SingleRunSimulator {
+    pub fn new(
+        scenario: ScenarioConfig,
+        replication_index: usize,
+        seed: Option<u64>,
+    ) -> Result<Self> {
+        scenario.validate()?;
+
+        let actual_seed =
+            seed.unwrap_or_else(|| derive_run_seed(scenario.simulation.seed, replication_index));
+
+        let mut simulator = Self {
+            stats: StatisticsAccumulator::new(
+                scenario.capacity_k,
+                scenario.simulation.max_time,
+                scenario.simulation.warmup_time,
+            )?,
+            scenario,
+            replication_index,
+            seed: actual_seed,
+            rng: StdRng::seed_from_u64(actual_seed),
+            state: SystemState::new(),
+            state_trace: Vec::new(),
+            event_log: Vec::new(),
+        };
+
+        simulator.record_state_snapshot();
+        Ok(simulator)
+    }
+
+    fn record_state_snapshot(&mut self) {
+        if !self.scenario.simulation.record_state_trace {
+            return;
+        }
+
+        self.state_trace.push(StateSnapshot {
+            time: self.state.current_time,
+            num_jobs: self.state.num_jobs(),
+            occupied_resource: self.state.occupied_resource(),
+            arrival_rate: self.state.current_arrival_rate(&self.scenario),
+            service_speed: self.state.current_service_speed(&self.scenario),
+        });
+    }
+
+    fn record_event(
+        &mut self,
+        event_type: impl Into<String>,
+        job_id: Option<u64>,
+        num_jobs_before: usize,
+        num_jobs_after: usize,
+        occupied_resource_before: u32,
+        occupied_resource_after: u32,
+        details: impl Into<String>,
+    ) {
+        if !self.scenario.simulation.save_event_log {
+            return;
+        }
+
+        self.event_log.push(EventRecord {
+            time: self.state.current_time,
+            event_type: event_type.into(),
+            job_id,
+            num_jobs_before,
+            num_jobs_after,
+            occupied_resource_before,
+            occupied_resource_after,
+            details: details.into(),
+        });
+    }
+
+    fn sample_new_job_parameters(&mut self) -> Result<(u32, f64)> {
+        let resource_demand =
+            sample_resource_demand(&mut self.rng, &self.scenario.resource_distribution)?;
+        let workload = sample_workload(&mut self.rng, &self.scenario.workload_distribution)?;
+        Ok((resource_demand, workload))
+    }
+
+    fn process_arrival(&mut self) -> Result<()> {
+        let num_jobs_before = self.state.num_jobs();
+        let occupied_resource_before = self.state.occupied_resource();
+
+        let (resource_demand, workload) = self.sample_new_job_parameters()?;
+        self.stats.register_arrival_attempt(self.state.current_time);
+
+        let decision: AdmissionDecision = self.state.can_accept(resource_demand, &self.scenario)?;
+
+        if decision.accepted {
+            let job =
+                self.state
+                    .create_job(resource_demand, workload, Some(self.state.current_time))?;
+            let job_id = job.job_id;
+
+            self.state.add_job(job, &self.scenario)?;
+            self.stats.register_admission(self.state.current_time);
+
+            self.record_event(
+                "arrival_accepted",
+                Some(job_id),
+                num_jobs_before,
+                self.state.num_jobs(),
+                occupied_resource_before,
+                self.state.occupied_resource(),
+                format!(
+                    "resource_demand={}, workload={:.6}",
+                    resource_demand, workload
+                ),
+            );
+        } else {
+            self.stats
+                .register_rejection(self.state.current_time, decision.reason);
+
+            self.record_event(
+                "arrival_rejected",
+                None,
+                num_jobs_before,
+                self.state.num_jobs(),
+                occupied_resource_before,
+                self.state.occupied_resource(),
+                format!(
+                    "reason={}, resource_demand={}, workload={:.6}",
+                    decision.reason.as_str(),
+                    resource_demand,
+                    workload
+                ),
+            );
+        }
+
+        self.record_state_snapshot();
+        Ok(())
+    }
+
+    fn process_departures(&mut self) -> Result<()> {
+        let completed_ids = self.state.completed_jobs(COMPLETION_TOL);
+        if completed_ids.is_empty() {
+            return Ok(());
+        }
+
+        for job_id in completed_ids {
+            let num_jobs_before = self.state.num_jobs();
+            let occupied_resource_before = self.state.occupied_resource();
+
+            let removed_job = self.state.remove_job(job_id)?;
+            self.stats.register_departure(self.state.current_time);
+
+            self.record_event(
+                "departure",
+                Some(removed_job.job_id),
+                num_jobs_before,
+                self.state.num_jobs(),
+                occupied_resource_before,
+                self.state.occupied_resource(),
+                format!(
+                    "arrival_time={:.6}, total_workload={:.6}",
+                    removed_job.arrival_time, removed_job.total_workload
+                ),
+            );
+        }
+
+        self.record_state_snapshot();
+        Ok(())
+    }
+
+    pub fn run(mut self) -> Result<SimulationRunResult> {
+        let max_time = self.scenario.simulation.max_time;
+        let eps = self.scenario.simulation.time_epsilon;
+
+        while self.state.current_time < max_time - eps {
+            let t0 = self.state.current_time;
+
+            let arrival_dt = sample_next_arrival_delta(&mut self.rng, &self.state, &self.scenario)?;
+            let (next_departure_job_id, departure_dt) =
+                self.state.next_completion(&self.scenario)?;
+            let next_event_dt = arrival_dt.min(departure_dt);
+
+            if next_event_dt == INFINITY {
+                let t1 = max_time;
+                self.stats.observe_constant_interval(
+                    t0,
+                    t1,
+                    self.state.num_jobs(),
+                    self.state.occupied_resource(),
+                )?;
+                self.state
+                    .advance_time_and_service(t1 - t0, &self.scenario)?;
+                self.record_state_snapshot();
+                break;
+            }
+
+            if next_event_dt <= eps {
+                if departure_dt <= arrival_dt && next_departure_job_id.is_some() {
+                    self.process_departures()?;
+                    continue;
+                }
+                if arrival_dt < INFINITY {
+                    self.process_arrival()?;
+                    continue;
+                }
+                break;
+            }
+
+            if t0 + next_event_dt > max_time {
+                let t1 = max_time;
+                self.stats.observe_constant_interval(
+                    t0,
+                    t1,
+                    self.state.num_jobs(),
+                    self.state.occupied_resource(),
+                )?;
+                self.state
+                    .advance_time_and_service(t1 - t0, &self.scenario)?;
+                self.record_state_snapshot();
+                break;
+            }
+
+            let t1 = t0 + next_event_dt;
+            self.stats.observe_constant_interval(
+                t0,
+                t1,
+                self.state.num_jobs(),
+                self.state.occupied_resource(),
+            )?;
+
+            self.state
+                .advance_time_and_service(next_event_dt, &self.scenario)?;
+
+            if departure_dt < arrival_dt - eps {
+                self.process_departures()?;
+            } else if arrival_dt < departure_dt - eps {
+                self.process_arrival()?;
+            } else {
+                if next_departure_job_id.is_some() {
+                    self.process_departures()?;
+                }
+                self.process_arrival()?;
+            }
+        }
+
+        self.stats.build_result(
+            self.scenario.name.clone(),
+            self.replication_index,
+            self.seed,
+            self.state_trace,
+            self.event_log,
+        )
+    }
+}
+
+pub fn simulate_one_run(
+    scenario: ScenarioConfig,
+    replication_index: usize,
+    seed: Option<u64>,
+) -> Result<SimulationRunResult> {
+    SingleRunSimulator::new(scenario, replication_index, seed)?.run()
+}
+
+pub fn print_run_summary(result: &SimulationRunResult) {
+    println!("{}", "=".repeat(90));
+    println!("РЕЗУЛЬТАТ ОДНОГО ПРОГОНА");
+    println!("{}", "=".repeat(90));
+    println!(
+        "Сценарий:                          {}",
+        result.scenario_name
+    );
+    println!(
+        "Replication index:                 {}",
+        result.replication_index
+    );
+    println!("Seed:                              {}", result.seed);
+    println!("Полное время моделирования:        {}", result.total_time);
+    println!("Warm-up:                           {}", result.warmup_time);
+    println!(
+        "Наблюдаемое время:                 {}",
+        result.observed_time
+    );
+    println!("{}", "-".repeat(90));
+    println!(
+        "Среднее число заявок:              {:.6}",
+        result.mean_num_jobs
+    );
+    println!(
+        "Средний занятый ресурс:            {:.6}",
+        result.mean_occupied_resource
+    );
+    println!(
+        "Число попыток поступления:         {}",
+        result.arrival_attempts
+    );
+    println!(
+        "Число принятых заявок:             {}",
+        result.accepted_arrivals
+    );
+    println!(
+        "Число отказов:                     {}",
+        result.rejected_arrivals
+    );
+    println!(
+        "  из-за ёмкости K:                 {}",
+        result.rejected_capacity
+    );
+    println!(
+        "  из-за лимита приборов N:         {}",
+        result.rejected_server
+    );
+    println!(
+        "  из-за лимита ресурса R:          {}",
+        result.rejected_resource
+    );
+    println!(
+        "Число завершённых заявок:          {}",
+        result.completed_jobs
+    );
+    println!(
+        "Вероятность отказа:                {:.6}",
+        result.loss_probability
+    );
+    println!(
+        "Эффективная пропускная способность:{:.6}",
+        result.throughput
+    );
+    println!("{}", "-".repeat(90));
+    println!("Оценка стационарного распределения pi_hat(k):");
+    for (k, value) in result.pi_hat.iter().enumerate() {
+        println!("  k={:>2}: {:.6}", k, value);
+    }
+    println!("{}", "=".repeat(90));
+    println!();
+}
+
+pub fn self_test() -> Result<()> {
+    let workloads = standard_workload_family(1.0)?;
+    let workload = workloads.get("exponential").cloned().ok_or_else(|| {
+        SimulationError::Validation(
+            "Не найден workload 'exponential' в standard_workload_family".to_string(),
+        )
+    })?;
+
+    let mut test_scenario = build_base_scenario(workload, "_simulation_self_test")?;
+
+    test_scenario.simulation = SimulationConfig {
+        max_time: 2_000.0,
+        warmup_time: 200.0,
+        replications: 1,
+        record_state_trace: true,
+        save_event_log: true,
+        ..test_scenario.simulation.clone()
     };
 
-    let pi_hat = state_times.iter().map(|v| v / observed_time).collect::<Vec<_>>();
+    let result = simulate_one_run(test_scenario, 0, None)?;
+    print_run_summary(&result);
 
-    SimulationRunResult {
-        scenario_name: scenario.name.clone(),
-        replication_index,
-        seed,
-        total_time: scenario.simulation.max_time,
-        warmup_time: scenario.simulation.warmup_time,
-        mean_num_jobs: area_num_jobs / observed_time,
-        mean_occupied_resource: area_resource / observed_time,
-        accepted_arrivals,
-        rejected_arrivals,
-        rejected_capacity,
-        rejected_server,
-        rejected_resource,
-        completed_jobs,
-        throughput,
-        loss_probability,
-        pi_hat,
+    println!("Первые 10 снимков состояния:");
+    for snapshot in result.state_trace.iter().take(10) {
+        println!(
+            "  t={:>10.6} | k={:>2} | res={:>2} | lambda={:>7.4} | sigma={:>7.4}",
+            snapshot.time,
+            snapshot.num_jobs,
+            snapshot.occupied_resource,
+            snapshot.arrival_rate,
+            snapshot.service_speed
+        );
+    }
+    println!();
+
+    println!("Первые 10 записей event log:");
+    for event in result.event_log.iter().take(10) {
+        println!(
+            "  t={:>10.6} | type={:<17} | job_id={:>4} | k: {}->{} | res: {}->{} | {}",
+            event.time,
+            event.event_type,
+            event
+                .job_id
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| "None".to_string()),
+            event.num_jobs_before,
+            event.num_jobs_after,
+            event.occupied_resource_before,
+            event.occupied_resource_after,
+            event.details
+        );
+    }
+    println!();
+
+    println!("SELF-TEST simulation.rs завершён успешно.");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_seed_matches_python_formula() {
+        assert_eq!(derive_run_seed(42, 0), 42);
+        assert_eq!(derive_run_seed(42, 1), 42 + 1_000_003);
+        assert_eq!(derive_run_seed(42, 2), 42 + 2 * 1_000_003);
+    }
+
+    #[test]
+    fn overlap_length_works() {
+        assert!((interval_overlap_length(0.0, 10.0, 2.0, 4.0) - 2.0).abs() < 1e-12);
+        assert_eq!(interval_overlap_length(0.0, 1.0, 2.0, 3.0), 0.0);
+    }
+
+    #[test]
+    fn smoke_run_exponential_base_scenario() {
+        let workloads = standard_workload_family(1.0).unwrap();
+        let mut scenario =
+            build_base_scenario(workloads.get("exponential").unwrap().clone(), "_smoke").unwrap();
+
+        scenario.simulation.max_time = 50.0;
+        scenario.simulation.warmup_time = 5.0;
+        scenario.simulation.record_state_trace = true;
+        scenario.simulation.save_event_log = true;
+
+        let result = simulate_one_run(scenario, 0, Some(12345)).unwrap();
+
+        assert!(result.observed_time > 0.0);
+        assert_eq!(result.pi_hat.len(), 11);
+        assert!(result.loss_probability >= 0.0);
+        assert!(result.loss_probability <= 1.0);
     }
 }

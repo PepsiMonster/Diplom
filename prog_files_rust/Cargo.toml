@@ -30,3 +30,9 @@ plotters = "0.3"
 
 # rayon — многопоточный запуск репликаций/сценариев для ускорения экспериментов.
 rayon = "1"
+
+[profile.release]
+debug = 1
+overflow-checks = true
+lto = "thin"
+codegen-units = 1
