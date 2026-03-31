@@ -7,19 +7,16 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use thiserror::Error;
 
 use crate::experiments::{
-    build_default_experiment_suite, print_experiment_suite_summary, run_experiment_suite,
-    save_experiment_suite, ExperimentSuiteResult, ExperimentsError,
+    build_default_experiment_suite, run_experiment_suite, save_experiment_suite,
+    ExperimentSuiteResult, ExperimentsError,
 };
 use crate::params::{
-    build_sensitivity_scenarios, print_scenario_summary, standard_workload_family, ParamsError,
-    ScenarioConfig,
+    build_sensitivity_scenarios, standard_workload_family, ParamsError, ScenarioConfig,
 };
 use crate::plots::{
     generate_standard_plots, load_suite_data, resolve_suite_result_json, PlotSuiteData, PlotsError,
 };
-use crate::simulation::{
-    print_run_summary, simulate_one_run, SimulationError, SimulationRunResult,
-};
+use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
 #[derive(Debug, Error)]
 pub enum RunError {
@@ -258,6 +255,124 @@ fn save_markdown_report(lines: &[String], output_path: impl AsRef<Path>) -> Resu
     Ok(out)
 }
 
+fn save_text_report(text: &str, output_path: impl AsRef<Path>) -> Result<PathBuf> {
+    let out = output_path.as_ref().to_path_buf();
+    let mut body = text.to_string();
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    fs::write(&out, body)?;
+    Ok(out)
+}
+
+fn render_single_run_text(result: &SimulationRunResult, scenario: &ScenarioConfig) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("{}\n", "=".repeat(90)));
+    out.push_str("РЕЗУЛЬТАТ ОДНОГО ПРОГОНА\n");
+    out.push_str(&format!("{}\n", "=".repeat(90)));
+    out.push_str(&format!(
+        "{}\n",
+        scenario.summary_string().unwrap_or_default()
+    ));
+    out.push_str(&format!("Сценарий: {}\n", result.scenario_name));
+    out.push_str(&format!(
+        "Replication index: {}\n",
+        result.replication_index
+    ));
+    out.push_str(&format!("Seed: {}\n", result.seed));
+    out.push_str(&format!(
+        "Полное время моделирования: {}\n",
+        result.total_time
+    ));
+    out.push_str(&format!("Warm-up: {}\n", result.warmup_time));
+    out.push_str(&format!("Наблюдаемое время: {}\n", result.observed_time));
+    out.push_str(&format!("{}\n", "-".repeat(90)));
+    out.push_str(&format!(
+        "Среднее число заявок: {:.6}\n",
+        result.mean_num_jobs
+    ));
+    out.push_str(&format!(
+        "Средний занятый ресурс: {:.6}\n",
+        result.mean_occupied_resource
+    ));
+    out.push_str(&format!(
+        "Число попыток поступления: {}\n",
+        result.arrival_attempts
+    ));
+    out.push_str(&format!(
+        "Число принятых заявок: {}\n",
+        result.accepted_arrivals
+    ));
+    out.push_str(&format!("Число отказов: {}\n", result.rejected_arrivals));
+    out.push_str(&format!(
+        "  из-за ёмкости K: {}\n",
+        result.rejected_capacity
+    ));
+    out.push_str(&format!(
+        "  из-за лимита приборов N: {}\n",
+        result.rejected_server
+    ));
+    out.push_str(&format!(
+        "  из-за лимита ресурса R: {}\n",
+        result.rejected_resource
+    ));
+    out.push_str(&format!(
+        "Число завершённых заявок: {}\n",
+        result.completed_jobs
+    ));
+    out.push_str(&format!(
+        "Вероятность отказа: {:.6}\n",
+        result.loss_probability
+    ));
+    out.push_str(&format!(
+        "Эффективная пропускная способность: {:.6}\n",
+        result.throughput
+    ));
+    out.push_str("Оценка стационарного распределения pi_hat(k):\n");
+    for (k, value) in result.pi_hat.iter().enumerate() {
+        out.push_str(&format!("  k={:>2}: {:.6}\n", k, value));
+    }
+    out
+}
+
+fn render_suite_summary_text(suite_result: &ExperimentSuiteResult) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("{}\n", "#".repeat(96)));
+    out.push_str(&format!(
+        "НАБОР ЭКСПЕРИМЕНТОВ: {}\n",
+        suite_result.suite_name
+    ));
+    out.push_str(&format!("Создан: {}\n", suite_result.created_at));
+    out.push_str(&format!("{}\n\n", "#".repeat(96)));
+
+    for (scenario_key, result) in &suite_result.scenario_results {
+        out.push_str(&format!("[{}]\n", scenario_key));
+        out.push_str(&format!("СЦЕНАРИЙ: {}\n", result.scenario_name));
+        out.push_str(&format!("{}\n", result.scenario_description));
+        out.push_str(&format!("Число повторов: {}\n", result.replications));
+        out.push_str(&format!("{}\n", "-".repeat(96)));
+        for metric_name in [
+            "mean_num_jobs",
+            "mean_occupied_resource",
+            "loss_probability",
+            "throughput",
+            "accepted_arrivals",
+            "rejected_arrivals",
+            "completed_jobs",
+        ] {
+            if let Some(m) = result.metric_summaries.get(metric_name) {
+                out.push_str(&format!(
+                    "{:<28} mean={:>12.6} | std={:>12.6} | CI[{:.2}]=[{:>10.6}, {:>10.6}]\n",
+                    metric_name, m.mean, m.std, m.ci_level, m.ci_low, m.ci_high
+                ));
+            }
+        }
+        out.push('\n');
+    }
+
+    out
+}
+
 fn save_single_run_report(
     result: &SimulationRunResult,
     scenario: &ScenarioConfig,
@@ -385,9 +500,10 @@ fn save_suite_report(
         "## Где лежат артефакты".to_string(),
         format!("- Папка серии: `{}`.", suite_dir.display()),
         format!(
-            "- Таблицы/JSON: `{}`, `{}`, `{}`.",
+            "- Таблицы/JSON: `{}`, `{}`, `{}`, `{}`.",
             suite_dir.join("aggregated_summary.csv").display(),
             suite_dir.join("all_runs.csv").display(),
+            suite_dir.join("metric_summaries_long.csv").display(),
             suite_dir.join("suite_result.json").display()
         ),
     ]);
@@ -399,23 +515,12 @@ fn save_plots_report(
     suite_data: &PlotSuiteData,
     input_path: impl AsRef<Path>,
     output_dir: impl AsRef<Path>,
+    created_paths: &[PathBuf],
 ) -> Result<PathBuf> {
     let input_path = input_path.as_ref();
     let output_dir = output_dir.as_ref();
 
-    let png_count = fs::read_dir(output_dir)?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|s| s.eq_ignore_ascii_case("png"))
-                .unwrap_or(false)
-        })
-        .count();
-
-    let lines = vec![
+    let mut lines = vec![
         "# Отчёт по построению графиков".to_string(),
         "".to_string(),
         "## Что произошло".to_string(),
@@ -429,8 +534,22 @@ fn save_plots_report(
         "".to_string(),
         "## Результат".to_string(),
         format!("- Папка графиков: `{}`.", output_dir.display()),
-        format!("- Найдено PNG-файлов после генерации: **{}**.", png_count),
+        format!("- Построено PNG-файлов: **{}**.", created_paths.len()),
     ];
+
+    if !created_paths.is_empty() {
+        lines.push(String::new());
+        lines.push("## Встроенные графики".to_string());
+        for image_path in created_paths {
+            let filename = image_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("plot.png");
+            lines.push(format!("### {}", filename));
+            lines.push(format!("![{}]({})", filename, filename));
+            lines.push(String::new());
+        }
+    }
 
     let parent = output_dir.parent().unwrap_or(output_dir);
     save_markdown_report(&lines, parent.join("plots_report.md"))
@@ -508,19 +627,25 @@ fn build_full_scenarios(
 
 pub fn run_single_mode(args: &SingleArgs) -> Result<PathBuf> {
     let scenario = build_single_scenario(args)?;
-    print_scenario_summary(&scenario)?;
 
     let result = simulate_one_run(scenario.clone(), args.replication_index, args.seed)?;
-    print_run_summary(&result);
 
     let output_root = make_run_root(&args.output_root, "single_runs")?;
     let json_path = save_single_run_result(&result, &output_root)?;
     let report_path = save_single_run_report(&result, &scenario, args, &output_root, &json_path)?;
+    let txt_summary_path = save_text_report(
+        &render_single_run_text(&result, &scenario),
+        output_root.join("single_run_summary.txt"),
+    )?;
 
     println!("{}", "=".repeat(80));
     println!(
         "Результат одного прогона сохранён в: {}",
         json_path.display()
+    );
+    println!(
+        "Текстовый summary сохранён в: {}",
+        txt_summary_path.display()
     );
     println!("Markdown-отчёт сохранён в: {}", report_path.display());
     println!("{}", "=".repeat(80));
@@ -537,16 +662,22 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         args.keep_full_run_results,
     )?;
 
-    print_experiment_suite_summary(&suite_result, None);
-
     let output_root = make_run_root(&args.output_root, "experiments")?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
     let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
+    let txt_summary_path = save_text_report(
+        &render_suite_summary_text(&suite_result),
+        output_root.join("suite_summary.txt"),
+    )?;
 
     println!("{}", "=".repeat(80));
     println!(
         "Результаты серии экспериментов сохранены в: {}",
         suite_dir.display()
+    );
+    println!(
+        "Текстовый summary сохранён в: {}",
+        txt_summary_path.display()
     );
     println!("Markdown-отчёт сохранён в: {}", report_path.display());
     println!("{}", "=".repeat(80));
@@ -571,12 +702,12 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
         Some(metric_refs.as_slice())
     };
 
-    let _created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
+    let created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
 
     println!("{}", "=".repeat(80));
     println!("Папка с графиками: {}", output_dir.display());
 
-    let report_path = save_plots_report(&suite_data, &args.input, &output_dir)?;
+    let report_path = save_plots_report(&suite_data, &args.input, &output_dir, &created)?;
     println!("Markdown-отчёт сохранён в: {}", report_path.display());
     println!("{}", "=".repeat(80));
 
@@ -592,12 +723,14 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
         args.keep_full_run_results,
     )?;
 
-    print_experiment_suite_summary(&suite_result, None);
-
     let suite_dir = make_run_root(&args.output_root, "experiments")?;
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
     let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;
+    let suite_txt_summary_path = save_text_report(
+        &render_suite_summary_text(&suite_result),
+        suite_dir.join("suite_summary.txt"),
+    )?;
 
     let suite_data = load_suite_data(&suite_dir)?;
     let plots_dir = suite_dir.join("plots");
@@ -609,13 +742,17 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
         Some(metric_refs.as_slice())
     };
 
-    let _created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
-    let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir)?;
+    let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
     println!("Полный запуск завершён.");
     println!("Результаты серии: {}", suite_dir.display());
     println!("Графики: {}", plots_dir.display());
+    println!(
+        "Текстовый summary по серии: {}",
+        suite_txt_summary_path.display()
+    );
     println!("Markdown-отчёт по серии: {}", suite_report_path.display());
     println!(
         "Markdown-отчёт по графикам: {}",

@@ -648,7 +648,8 @@ pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDi
 
 pub fn build_base_simulation_config() -> Result<SimulationConfig> {
     let cfg = SimulationConfig {
-        warmup_time: 20_000.0,
+        max_time: 200_000.0,
+        warmup_time: 40_000.0,
         replications: 30,
         ..SimulationConfig::default()
     };
@@ -666,13 +667,7 @@ pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> 
 }
 
 pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
-    threshold_profile(
-        capacity_k,
-        3.20,
-        capacity_k.saturating_sub(4),
-        2.20,
-        0.0,
-    )
+    threshold_profile(capacity_k, 3.20, capacity_k.saturating_sub(4), 2.20, 0.0)
 }
 
 pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
