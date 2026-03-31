@@ -648,7 +648,7 @@ pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDi
 
 pub fn build_base_simulation_config() -> Result<SimulationConfig> {
     let cfg = SimulationConfig {
-        max_time: 200_000.0,
+        max_time: 400_000.0,
         warmup_time: 40_000.0,
         replications: 30,
         ..SimulationConfig::default()

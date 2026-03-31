@@ -1,0 +1,96 @@
+################################################################################################
+НАБОР ЭКСПЕРИМЕНТОВ: service_dist_sensitivity
+Создан: 2026-04-01T01:11:46
+################################################################################################
+
+[deterministic]
+СЦЕНАРИЙ: base_deterministic
+Scenario(name='base_deterministic', K=20, N=12, R=40, resource='ResourceCustom', work='Deterministic', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.643728 | std=    0.004366 | CI[0.95]=[  2.641814,   2.645641]
+mean_occupied_resource       mean=   15.212133 | std=    0.026910 | CI[0.95]=[ 15.200340,  15.223927]
+loss_probability             mean=    0.055441 | std=    0.000579 | CI[0.95]=[  0.055187,   0.055695]
+throughput                   mean=    3.023972 | std=    0.004098 | CI[0.95]=[  3.022176,   3.025768]
+accepted_arrivals            mean=241917.600000 | std=  328.801716 | CI[0.95]=[241773.498942, 242061.701058]
+rejected_arrivals            mean=14199.450000 | std=  159.143588 | CI[0.95]=[14129.703529, 14269.196471]
+completed_jobs               mean=241917.750000 | std=  327.874153 | CI[0.95]=[241774.055457, 242061.444543]
+
+[erlang_2]
+СЦЕНАРИЙ: base_erlang_2
+Scenario(name='base_erlang_2', K=20, N=12, R=40, resource='ResourceCustom', work='Erlang(2)', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.642981 | std=    0.006091 | CI[0.95]=[  2.640312,   2.645651]
+mean_occupied_resource       mean=   15.217169 | std=    0.025813 | CI[0.95]=[ 15.205856,  15.228481]
+loss_probability             mean=    0.055364 | std=    0.000507 | CI[0.95]=[  0.055142,   0.055586]
+throughput                   mean=    3.023572 | std=    0.006347 | CI[0.95]=[  3.020791,   3.026354]
+accepted_arrivals            mean=241886.050000 | std=  507.747604 | CI[0.95]=[241663.523890, 242108.576110]
+rejected_arrivals            mean=14176.700000 | std=  137.662478 | CI[0.95]=[14116.367867, 14237.032133]
+completed_jobs               mean=241885.800000 | std=  507.758708 | CI[0.95]=[241663.269024, 242108.330976]
+
+[erlang_4]
+СЦЕНАРИЙ: base_erlang_4
+Scenario(name='base_erlang_4', K=20, N=12, R=40, resource='ResourceCustom', work='Erlang(4)', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.642735 | std=    0.004570 | CI[0.95]=[  2.640732,   2.644738]
+mean_occupied_resource       mean=   15.206815 | std=    0.036032 | CI[0.95]=[ 15.191023,  15.222606]
+loss_probability             mean=    0.055199 | std=    0.000544 | CI[0.95]=[  0.054961,   0.055437]
+throughput                   mean=    3.023080 | std=    0.004729 | CI[0.95]=[  3.021007,   3.025153]
+accepted_arrivals            mean=241846.400000 | std=  378.993598 | CI[0.95]=[241680.301784, 242012.498216]
+rejected_arrivals            mean=14129.750000 | std=  152.985336 | CI[0.95]=[14062.702452, 14196.797548]
+completed_jobs               mean=241846.400000 | std=  378.356474 | CI[0.95]=[241680.581011, 242012.218989]
+
+[erlang_8]
+СЦЕНАРИЙ: base_erlang_8
+Scenario(name='base_erlang_8', K=20, N=12, R=40, resource='ResourceCustom', work='Erlang(8)', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.644587 | std=    0.005539 | CI[0.95]=[  2.642160,   2.647015]
+mean_occupied_resource       mean=   15.213525 | std=    0.029667 | CI[0.95]=[ 15.200523,  15.226526]
+loss_probability             mean=    0.055232 | std=    0.000577 | CI[0.95]=[  0.054979,   0.055485]
+throughput                   mean=    3.024739 | std=    0.005701 | CI[0.95]=[  3.022240,   3.027237]
+accepted_arrivals            mean=241979.600000 | std=  455.680567 | CI[0.95]=[241779.892856, 242179.307144]
+rejected_arrivals            mean=14146.400000 | std=  155.609633 | CI[0.95]=[14078.202325, 14214.597675]
+completed_jobs               mean=241979.100000 | std=  456.053425 | CI[0.95]=[241779.229447, 242178.970553]
+
+[exponential]
+СЦЕНАРИЙ: base_exponential
+Scenario(name='base_exponential', K=20, N=12, R=40, resource='ResourceCustom', work='Exponential', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.643064 | std=    0.005874 | CI[0.95]=[  2.640489,   2.645638]
+mean_occupied_resource       mean=   15.199869 | std=    0.039010 | CI[0.95]=[ 15.182772,  15.216965]
+loss_probability             mean=    0.054905 | std=    0.000797 | CI[0.95]=[  0.054556,   0.055255]
+throughput                   mean=    3.024075 | std=    0.006145 | CI[0.95]=[  3.021382,   3.026768]
+accepted_arrivals            mean=241927.000000 | std=  491.757428 | CI[0.95]=[241711.481765, 242142.518235]
+rejected_arrivals            mean=14055.000000 | std=  222.722390 | CI[0.95]=[13957.389402, 14152.610598]
+completed_jobs               mean=241926.000000 | std=  491.566990 | CI[0.95]=[241710.565227, 242141.434773]
+
+[hyperexp_2]
+СЦЕНАРИЙ: base_hyperexp_2
+Scenario(name='base_hyperexp_2', K=20, N=12, R=40, resource='ResourceCustom', work='HyperExp(2)', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.642528 | std=    0.011670 | CI[0.95]=[  2.637414,   2.647642]
+mean_occupied_resource       mean=   15.191716 | std=    0.078228 | CI[0.95]=[ 15.157432,  15.226000]
+loss_probability             mean=    0.054863 | std=    0.000745 | CI[0.95]=[  0.054537,   0.055190]
+throughput                   mean=    3.025957 | std=    0.006424 | CI[0.95]=[  3.023141,   3.028772]
+accepted_arrivals            mean=242076.100000 | std=  513.620677 | CI[0.95]=[241850.999950, 242301.200050]
+rejected_arrivals            mean=14052.300000 | std=  214.753494 | CI[0.95]=[13958.181861, 14146.418139]
+completed_jobs               mean=242076.550000 | std=  513.945264 | CI[0.95]=[241851.307696, 242301.792304]
+
+[hyperexp_heavy]
+СЦЕНАРИЙ: base_hyperexp_heavy
+Scenario(name='base_hyperexp_heavy', K=20, N=12, R=40, resource='ResourceCustom', work='HyperExpHeavy', replications=20)
+Число повторов: 20
+------------------------------------------------------------------------------------------------
+mean_num_jobs                mean=    2.638753 | std=    0.010813 | CI[0.95]=[  2.634014,   2.643492]
+mean_occupied_resource       mean=   15.202766 | std=    0.085882 | CI[0.95]=[ 15.165127,  15.240405]
+loss_probability             mean=    0.055055 | std=    0.001190 | CI[0.95]=[  0.054534,   0.055577]
+throughput                   mean=    3.022057 | std=    0.007261 | CI[0.95]=[  3.018875,   3.025240]
+accepted_arrivals            mean=241764.450000 | std=  580.268311 | CI[0.95]=[241510.140873, 242018.759127]
+rejected_arrivals            mean=14085.950000 | std=  309.003062 | CI[0.95]=[13950.525926, 14221.374074]
+completed_jobs               mean=241764.600000 | std=  580.901332 | CI[0.95]=[241510.013444, 242019.186556]
+
