@@ -857,7 +857,7 @@ mod tests {
         let result = simulate_one_run(scenario, 0, Some(12345)).unwrap();
 
         assert!(result.observed_time > 0.0);
-        assert_eq!(result.pi_hat.len(), 11);
+        assert_eq!(result.pi_hat.len(), 21);
         assert!(result.loss_probability >= 0.0);
         assert!(result.loss_probability <= 1.0);
     }

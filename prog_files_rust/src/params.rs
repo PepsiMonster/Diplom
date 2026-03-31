@@ -631,52 +631,56 @@ pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDi
         WorkloadDistributionConfig::erlang(mean, 4, Some("Erlang(4)".to_string()))?,
     );
     family.insert(
+        "erlang_8".to_string(),
+        WorkloadDistributionConfig::erlang(mean, 8, Some("Erlang(8)".to_string()))?,
+    );
+    family.insert(
         "hyperexp_2".to_string(),
         WorkloadDistributionConfig::hyperexponential2(mean, 0.75, 4.0, "HyperExp(2)")?,
+    );
+    family.insert(
+        "hyperexp_heavy".to_string(),
+        WorkloadDistributionConfig::hyperexponential2(mean, 0.85, 6.0, "HyperExpHeavy")?,
     );
 
     Ok(family)
 }
 
 pub fn build_base_simulation_config() -> Result<SimulationConfig> {
-    let cfg = SimulationConfig::default();
+    let cfg = SimulationConfig {
+        max_time: 200_000.0,
+        warmup_time: 40_000.0,
+        replications: 30,
+        ..SimulationConfig::default()
+    };
     cfg.validate()?;
     Ok(cfg)
 }
 
 pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> {
-    let cfg = ResourceDistributionConfig::DiscreteUniform {
-        min_units: 1,
-        max_units: 3,
+    let cfg = ResourceDistributionConfig::DiscreteCustom {
+        values: vec![2, 4, 8, 12, 16],
+        probabilities: vec![0.30, 0.30, 0.20, 0.15, 0.05],
     };
     cfg.validate()?;
     Ok(cfg)
 }
 
 pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
-    threshold_profile(
-        capacity_k,
-        3.20, // Ранее 1.80 
-        std::cmp::max(1, capacity_k.saturating_sub(3)),
-        2.20, // Ранее 1.20
-        0.0,
-    )
+    threshold_profile(capacity_k, 3.20, capacity_k.saturating_sub(4), 2.20, 0.0)
 }
 
 pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
-    linear_decreasing_profile(capacity_k, 
-        1.40, // Ранее 1.20
-        0.07, // Ранее 0.04
-        0.60) //
+    linear_decreasing_profile(capacity_k, 1.40, 0.07, 0.35)
 }
 
 pub fn build_base_scenario(
     workload_distribution: WorkloadDistributionConfig,
     name_suffix: &str,
-) -> Result<ScenarioConfig> { 
-    let capacity_k = 20; // Предыдущий вариант - 10, более быстрый
-    let servers_n = 12; // Предыдущий вариант - 10
-    let total_resource_r = 40; // Предыдущий вариант - 40
+) -> Result<ScenarioConfig> {
+    let capacity_k = 20;
+    let servers_n = 12;
+    let total_resource_r = 40;
 
     let scenario = ScenarioConfig {
         name: format!("base{name_suffix}"),
@@ -688,7 +692,7 @@ pub fn build_base_scenario(
         resource_distribution: build_base_resource_distribution()?,
         workload_distribution,
         simulation: build_base_simulation_config()?,
-        note: "Базовый сценарий для сравнения распределений объёма работы при фиксированных K, N, R, lambda_k и sigma_k.".to_string(),
+        note: "Базовый напряжённый сценарий для анализа чувствительности ресурсной СМО к распределению объёма работ.".to_string(),
     };
 
     scenario.validate()?;
@@ -733,7 +737,7 @@ mod tests {
     #[test]
     fn builds_standard_sensitivity_family() {
         let scenarios = build_sensitivity_scenarios(1.0).unwrap();
-        assert_eq!(scenarios.len(), 5);
+        assert_eq!(scenarios.len(), 7);
 
         for scenario in scenarios.values() {
             scenario.validate().unwrap();

@@ -821,6 +821,7 @@ pub fn print_available_metrics(suite_data: &PlotSuiteData) {
 mod tests {
     use super::*;
     use crate::experiments::MetricSummary;
+    use serde_json::json;
 
     fn demo_suite() -> PlotSuiteData {
         let mut metric_summaries = BTreeMap::new();

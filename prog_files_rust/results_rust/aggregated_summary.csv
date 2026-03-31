@@ -1,2 +1,0 @@
-scenario_name,replications,throughput_mean,loss_probability_mean,mean_num_jobs_mean,mean_occupied_resource_mean
-base,10,1.983056,0.000252,1.634318,3.274520
