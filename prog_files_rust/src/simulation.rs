@@ -11,8 +11,9 @@ use thiserror::Error;
 
 use crate::model::{AdmissionDecision, ModelError, RejectionReason, SystemState, COMPLETION_TOL};
 use crate::params::{
-    build_base_scenario, standard_workload_family, ParamsError, ResourceDistributionConfig,
-    ScenarioConfig, SimulationConfig, WorkloadDistributionConfig,
+    build_base_scenario_from_values, load_default_external_experiment_values, ParamsError,
+    ResourceDistributionConfig, ScenarioConfig, SimulationConfig, WorkloadDistributionConfig,
+    standard_workload_family_from_values,
 };
 
 #[derive(Debug, Error)]
@@ -769,14 +770,17 @@ pub fn print_run_summary(result: &SimulationRunResult) {
 }
 
 pub fn self_test() -> Result<()> {
-    let workloads = standard_workload_family(1.0)?;
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = 1.0;
+    let workloads = standard_workload_family_from_values(&values)?;
     let workload = workloads.get("exponential").cloned().ok_or_else(|| {
         SimulationError::Validation(
             "Не найден workload 'exponential' в standard_workload_family".to_string(),
         )
     })?;
 
-    let mut test_scenario = build_base_scenario(workload, "_simulation_self_test")?;
+    let mut test_scenario =
+        build_base_scenario_from_values(&values, workload, "_simulation_self_test")?;
 
     test_scenario.simulation = SimulationConfig {
         max_time: 2_000.0,
@@ -845,9 +849,15 @@ mod tests {
 
     #[test]
     fn smoke_run_exponential_base_scenario() {
-        let workloads = standard_workload_family(1.0).unwrap();
-        let mut scenario =
-            build_base_scenario(workloads.get("exponential").unwrap().clone(), "_smoke").unwrap();
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
+        let mut scenario = build_base_scenario_from_values(
+            &values,
+            workloads.get("exponential").unwrap().clone(),
+            "_smoke",
+        )
+        .unwrap();
 
         scenario.simulation.max_time = 50.0;
         scenario.simulation.warmup_time = 5.0;
