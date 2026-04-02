@@ -1,0 +1,51 @@
+{
+  "suite_name": "baseline",
+  "mean_workload": 1.0,
+  "replications": 40,
+  "max_time": 200000.0,
+  "warmup_time": 40000.0,
+  "base_seed": 42,
+  "capacity_k": 20,
+  "servers_n": 12,
+  "total_resource_r": 40,
+  "arrival_normal_value": 3.2,
+  "arrival_threshold_offset": 4,
+  "arrival_reduced_value": 2.2,
+  "arrival_full_state_value": 0.0,
+  "service_start_value": 1.4,
+  "service_step": 0.07,
+  "service_floor_value": 0.35,
+  "resource_values": [
+    2,
+    4,
+    8,
+    12,
+    16
+  ],
+  "resource_probabilities": [
+    0.3,
+    0.3,
+    0.2,
+    0.15,
+    0.05
+  ],
+  "workload_family": [
+    "deterministic",
+    "exponential",
+    "erlang_2",
+    "erlang_4",
+    "erlang_8",
+    "hyperexp_2",
+    "hyperexp_heavy"
+  ],
+  "workload_hyperexp_p": 0.75,
+  "workload_hyperexp_fast_multiplier": 4.0,
+  "workload_hyperexp_heavy_p": 0.85,
+  "workload_hyperexp_heavy_fast_multiplier": 6.0,
+  "arrival_process_family": [
+    "poisson",
+    "erlang_2",
+    "erlang_4",
+    "hyperexp_2"
+  ]
+}
