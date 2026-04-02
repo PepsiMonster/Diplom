@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -11,7 +12,9 @@ use crate::experiments::{
     ExperimentSuiteResult, ExperimentsError,
 };
 use crate::params::{
-    build_sensitivity_scenarios, standard_workload_family, ParamsError, ScenarioConfig,
+    build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
+    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError,
+    ScenarioConfig,
 };
 use crate::plots::{
     generate_standard_plots, load_suite_data, resolve_suite_result_json, PlotSuiteData, PlotsError,
@@ -558,14 +561,79 @@ fn save_plots_report(
     save_markdown_report(&lines, parent.join("plots_report.md"))
 }
 
+fn run_python_plots(
+    input_path: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+    metrics: &[String],
+    dpi: u32,
+) -> Result<()> {
+    let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("py")
+        .join("plots.py");
+
+    let script_arg = script_path.to_string_lossy().to_string();
+    let input_arg = input_path.as_ref().to_string_lossy().to_string();
+    let output_arg = output_dir.as_ref().to_string_lossy().to_string();
+    let dpi_arg = dpi.to_string();
+
+    let metrics_args: Vec<String> = metrics.to_vec();
+
+    let candidate_commands: Vec<(&str, Vec<String>)> = vec![
+        ("python3", vec![script_arg.clone()]),
+        ("python", vec![script_arg.clone()]),
+        ("py", vec!["-3".to_string(), script_arg.clone()]),
+    ];
+
+    let mut launch_errors = Vec::new();
+
+    for (program, mut base_args) in candidate_commands {
+        base_args.push("--input".to_string());
+        base_args.push(input_arg.clone());
+        base_args.push("--output-dir".to_string());
+        base_args.push(output_arg.clone());
+        base_args.push("--dpi".to_string());
+        base_args.push(dpi_arg.clone());
+
+        if !metrics_args.is_empty() {
+            base_args.push("--metrics".to_string());
+            base_args.extend(metrics_args.iter().cloned());
+        }
+
+        match Command::new(program).args(&base_args).output() {
+            Ok(output) => {
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                launch_errors.push(format!(
+                    "{program}: exit_code={:?}, stderr={}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Err(e) => {
+                launch_errors.push(format!("{program}: {e}"));
+            }
+        }
+    }
+
+    Err(RunError::Validation(format!(
+        "Не удалось запустить Python plotting. Пробовали python3/python/py -3.\n{}",
+        launch_errors.join("\n")
+    )))
+}
+
 fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
-    let workloads = standard_workload_family(args.mean_workload)?;
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
+    let workloads = standard_workload_family_from_values(&values)?;
     let workload = workloads
         .get("exponential")
         .cloned()
         .ok_or_else(|| RunError::Validation("Не найден workload 'exponential'".to_string()))?;
 
-    let base = crate::params::build_base_scenario(workload, "")?;
+    let base = build_base_scenario_from_values(&values, workload, "")?;
     let scenario = override_simulation_config(
         &base,
         args.max_time,
@@ -581,9 +649,12 @@ fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
 fn build_suite_scenarios(
     args: &SuiteArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -606,9 +677,12 @@ fn build_suite_scenarios(
 fn build_full_scenarios(
     args: &FullArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -681,6 +755,7 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         Some(metric_refs.as_slice())
     };
     let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics, 200)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
@@ -721,6 +796,7 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
     };
 
     let created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
+    run_python_plots(&args.input, &output_dir, &args.metrics, args.dpi)?;
 
     println!("{}", "=".repeat(80));
     println!("Папка с графиками: {}", output_dir.display());
@@ -761,6 +837,7 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     };
 
     let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics, args.dpi)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
@@ -808,9 +885,11 @@ mod tests {
 
     #[test]
     fn override_simulation_config_works() {
-        let workloads = standard_workload_family(1.0).unwrap();
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
         let workload = workloads.get("exponential").unwrap().clone();
-        let base = crate::params::build_base_scenario(workload, "").unwrap();
+        let base = build_base_scenario_from_values(&values, workload, "").unwrap();
 
         let updated =
             override_simulation_config(&base, Some(123.0), Some(12.0), Some(7), true, true);
