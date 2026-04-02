@@ -1,0 +1,38 @@
+[package]
+name = "prog_files_rust"
+version = "0.1.0"
+edition = "2021"
+# edition=2021 — стабильная и самая распространённая редакция Rust для экосистемы Cargo.
+
+[dependencies]
+# serde + serde_json — сериализация/десериализация структур (аналог ваших JSON-отчётов).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# csv — удобная запись/чтение CSV (аналог summary/all_runs таблиц).
+csv = "1"
+
+# clap — CLI с subcommands single/suite/plots/full (аналог run.py).
+clap = { version = "4", features = ["derive"] }
+
+# rand + rand_distr — генерация случайных величин и распределений для имитации.
+rand = "0.8"
+rand_distr = "0.4"
+
+# thiserror — аккуратные типы ошибок (полезно для валидации параметров и I/O).
+thiserror = "1"
+
+# chrono — timestamp для выходных директорий и отчётов.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# plotters — построение PNG-графиков внутри Rust-версии.
+plotters = "0.3"
+
+# rayon — многопоточный запуск репликаций/сценариев для ускорения экспериментов.
+rayon = "1"
+
+[profile.release]
+debug = 1
+overflow-checks = true
+lto = "thin"
+codegen-units = 1
