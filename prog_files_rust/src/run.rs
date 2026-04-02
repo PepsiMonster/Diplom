@@ -11,7 +11,9 @@ use crate::experiments::{
     ExperimentSuiteResult, ExperimentsError,
 };
 use crate::params::{
-    build_sensitivity_scenarios, standard_workload_family, ParamsError, ScenarioConfig,
+    build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
+    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError,
+    ScenarioConfig,
 };
 use crate::plots::{
     generate_standard_plots, load_suite_data, resolve_suite_result_json, PlotSuiteData, PlotsError,
@@ -559,13 +561,16 @@ fn save_plots_report(
 }
 
 fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
-    let workloads = standard_workload_family(args.mean_workload)?;
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
+    let workloads = standard_workload_family_from_values(&values)?;
     let workload = workloads
         .get("exponential")
         .cloned()
         .ok_or_else(|| RunError::Validation("Не найден workload 'exponential'".to_string()))?;
 
-    let base = crate::params::build_base_scenario(workload, "")?;
+    let base = build_base_scenario_from_values(&values, workload, "")?;
     let scenario = override_simulation_config(
         &base,
         args.max_time,
@@ -581,9 +586,12 @@ fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
 fn build_suite_scenarios(
     args: &SuiteArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -606,9 +614,12 @@ fn build_suite_scenarios(
 fn build_full_scenarios(
     args: &FullArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -808,9 +819,11 @@ mod tests {
 
     #[test]
     fn override_simulation_config_works() {
-        let workloads = standard_workload_family(1.0).unwrap();
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
         let workload = workloads.get("exponential").unwrap().clone();
-        let base = crate::params::build_base_scenario(workload, "").unwrap();
+        let base = build_base_scenario_from_values(&values, workload, "").unwrap();
 
         let updated =
             override_simulation_config(&base, Some(123.0), Some(12.0), Some(7), true, true);
