@@ -571,32 +571,56 @@ fn run_python_plots(
         .join("py")
         .join("plots.py");
 
-    let mut cmd = Command::new("python3");
-    cmd.arg(script_path)
-        .arg("--input")
-        .arg(input_path.as_ref())
-        .arg("--output-dir")
-        .arg(output_dir.as_ref())
-        .arg("--dpi")
-        .arg(dpi.to_string());
+    let script_arg = script_path.to_string_lossy().to_string();
+    let input_arg = input_path.as_ref().to_string_lossy().to_string();
+    let output_arg = output_dir.as_ref().to_string_lossy().to_string();
+    let dpi_arg = dpi.to_string();
 
-    if !metrics.is_empty() {
-        cmd.arg("--metrics");
-        for metric in metrics {
-            cmd.arg(metric);
+    let metrics_args: Vec<String> = metrics.to_vec();
+
+    let candidate_commands: Vec<(&str, Vec<String>)> = vec![
+        ("python3", vec![script_arg.clone()]),
+        ("python", vec![script_arg.clone()]),
+        ("py", vec!["-3".to_string(), script_arg.clone()]),
+    ];
+
+    let mut launch_errors = Vec::new();
+
+    for (program, mut base_args) in candidate_commands {
+        base_args.push("--input".to_string());
+        base_args.push(input_arg.clone());
+        base_args.push("--output-dir".to_string());
+        base_args.push(output_arg.clone());
+        base_args.push("--dpi".to_string());
+        base_args.push(dpi_arg.clone());
+
+        if !metrics_args.is_empty() {
+            base_args.push("--metrics".to_string());
+            base_args.extend(metrics_args.iter().cloned());
+        }
+
+        match Command::new(program).args(&base_args).output() {
+            Ok(output) => {
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                launch_errors.push(format!(
+                    "{program}: exit_code={:?}, stderr={}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Err(e) => {
+                launch_errors.push(format!("{program}: {e}"));
+            }
         }
     }
 
-    let output = cmd.output()?;
-    if !output.status.success() {
-        return Err(RunError::Validation(format!(
-            "Python plotting завершился с ошибкой (code={:?}). stderr:\n{}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-
-    Ok(())
+    Err(RunError::Validation(format!(
+        "Не удалось запустить Python plotting. Пробовали python3/python/py -3.\n{}",
+        launch_errors.join("\n")
+    )))
 }
 
 fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
