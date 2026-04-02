@@ -257,7 +257,10 @@ def run_all_experiments(
 
     save_dict_rows_to_csv(raw_rows, run_results_path)
     save_dict_rows_to_csv(summary_rows, summary_results_path)
+<<<<<<< HEAD
     save_summary_rows_to_txt(summary_rows, summary_results_txt_path)
+=======
+>>>>>>> main
 
     return {
         "run_results_csv": run_results_path,

@@ -17,6 +17,7 @@
 
 # Прочие, временно?
 # Program_files/
+<<<<<<< HEAD
 *.pdf
 !tex/main.pdf
 /program_files_test.zip
@@ -24,3 +25,7 @@
 __pycache__/
 *.pyc
 *.pyo
+=======
+*.docx
+Обозначения.pdf
+>>>>>>> main

@@ -7,7 +7,10 @@
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 import csv
+=======
+>>>>>>> main
 import json
 from pathlib import Path
 
@@ -37,6 +40,7 @@ def save_pipeline_report(
         encoding="utf-8",
     )
 
+<<<<<<< HEAD
 
 def save_pipeline_report_txt(
     *,
@@ -95,6 +99,20 @@ def main() -> None:
     )
 
     print(f"Конвейер завершён успешно. Отчёты: {report_path}, {text_report_path}")
+=======
+
+def main() -> None:
+    experiment_outputs = run_all_experiments()
+    plot_outputs = build_all_plots()
+    report_path = Path("results") / "pipeline_report.json"
+    save_pipeline_report(
+        experiment_outputs=experiment_outputs,
+        plot_outputs=plot_outputs,
+        output_path=report_path,
+    )
+
+    print(f"Конвейер завершён успешно. Отчёт: {report_path}")
+>>>>>>> main
 
 
 if __name__ == "__main__":
