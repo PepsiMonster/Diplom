@@ -1,85 +1,3 @@
-<<<<<<< HEAD
-from __future__ import annotations
-
-from dataclasses import dataclass
-
-from pathlib import Path
-
-from typing import Any, Iterable
-
-import argparse
-
-import json
-
-import re
-
-import matplotlib.pyplot as plt
-
-import numpy as np
-
-@dataclass(slots=True)
-
-class PlotSuiteData:
-
-    suite_name: str
-
-    created_at: str
-
-    scenario_results: dict[str, dict[str, Any]]
-
-    def scenario_keys(self) -> list[str]:
-
-        return list(self.scenario_results.keys())
-
-def _read_json(filepath: str | Path) -> dict[str, Any]:
-
-    path = Path(filepath)
-
-    return json.loads(path.read_text(encoding="utf-8"))
-
-def load_suite_data_from_json(filepath: str | Path) -> PlotSuiteData:
-
-    payload = _read_json(filepath)
-
-    return PlotSuiteData(
-
-        suite_name=str(payload["suite_name"]),
-
-        created_at=str(payload["created_at"]),
-
-        scenario_results=dict(payload["scenario_results"]),
-
-    )
-
-def resolve_suite_result_json(input_path: str | Path) -> Path:
-
-    path = Path(input_path)
-
-    if path.is_dir():
-
-        candidate = path / "suite_result.json"
-
-        if not candidate.exists():
-
-            raise FileNotFoundError(
-
-                f"В директории '{path}' не найден файл suite_result.json"
-
-            )
-
-        return candidate
-
-    if path.is_file():
-
-        if path.name.lower() != "suite_result.json" and path.suffix.lower() != ".json":
-
-            raise ValueError(
-
-                f"Ожидался JSON-файл результата или директория результата, получено: {path}"
-
-            )
-
-=======
 # построение графиков и таблиц
 """
 plots.py
@@ -197,7 +115,6 @@ def resolve_suite_result_json(input_path: str | Path) -> Path:
             raise ValueError(
                 f"Ожидался JSON-файл результата или директория результата, получено: {path}"
             )
->>>>>>> main
         return path
 
     raise FileNotFoundError(f"Путь не найден: {path}")
