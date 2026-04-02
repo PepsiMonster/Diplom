@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -560,6 +561,41 @@ fn save_plots_report(
     save_markdown_report(&lines, parent.join("plots_report.md"))
 }
 
+fn run_python_plots(
+    input_path: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+    metrics: &[String],
+) -> Result<()> {
+    let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("py")
+        .join("plots.py");
+
+    let mut cmd = Command::new("python3");
+    cmd.arg(script_path)
+        .arg("--input")
+        .arg(input_path.as_ref())
+        .arg("--output-dir")
+        .arg(output_dir.as_ref());
+
+    if !metrics.is_empty() {
+        cmd.arg("--metrics");
+        for metric in metrics {
+            cmd.arg(metric);
+        }
+    }
+
+    let output = cmd.output()?;
+    if !output.status.success() {
+        return Err(RunError::Validation(format!(
+            "Python plotting завершился с ошибкой (code={:?}). stderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    Ok(())
+}
+
 fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
     let mut values = load_default_external_experiment_values()?;
     values.mean_workload = args.mean_workload;
@@ -692,6 +728,7 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         Some(metric_refs.as_slice())
     };
     let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
@@ -732,6 +769,7 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
     };
 
     let created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
+    run_python_plots(&args.input, &output_dir, &args.metrics)?;
 
     println!("{}", "=".repeat(80));
     println!("Папка с графиками: {}", output_dir.display());
@@ -772,6 +810,7 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     };
 
     let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
