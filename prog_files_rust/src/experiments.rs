@@ -9,7 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::params::{build_sensitivity_scenarios, ParamsError, ScenarioConfig};
+use crate::params::{
+    build_sensitivity_scenarios_from_values, load_default_external_experiment_values,
+    ExternalExperimentValues, ParamsError, ScenarioConfig,
+};
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
 #[derive(Debug, Error)]
@@ -527,7 +530,15 @@ pub fn save_experiment_suite(
 pub fn build_default_experiment_suite(
     mean_workload: f64,
 ) -> Result<BTreeMap<String, ScenarioConfig>> {
-    Ok(build_sensitivity_scenarios(mean_workload)?)
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = mean_workload;
+    build_default_experiment_suite_from_values(&values)
+}
+
+pub fn build_default_experiment_suite_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ScenarioConfig>> {
+    Ok(build_sensitivity_scenarios_from_values(values)?)
 }
 
 pub fn self_test() -> Result<()> {
