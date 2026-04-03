@@ -1,7 +1,6 @@
 mod experiments;
 mod model;
 mod params;
-mod plots;
 mod run;
 mod simulation;
 
