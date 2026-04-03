@@ -4,7 +4,10 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::params::{build_base_scenario, standard_workload_family, ParamsError, ScenarioConfig};
+use crate::params::{
+    build_base_scenario_from_values, load_default_external_experiment_values, ParamsError,
+    ScenarioConfig, standard_workload_family_from_values,
+};
 
 pub const COMPLETION_TOL: f64 = 1e-12;
 
@@ -411,13 +414,15 @@ impl SystemState {
 }
 
 pub fn self_test() -> Result<()> {
-    let workloads = standard_workload_family(1.0)?;
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = 1.0;
+    let workloads = standard_workload_family_from_values(&values)?;
     let workload = workloads
         .get("exponential")
         .cloned()
         .ok_or_else(|| ModelError::Validation("Не найден workload 'exponential'".to_string()))?;
 
-    let scenario = build_base_scenario(workload, "_model_self_test")?;
+    let scenario = build_base_scenario_from_values(&values, workload, "_model_self_test")?;
 
     println!("\nSELF-TEST model.rs\n");
     println!("Используемый сценарий:");
@@ -506,10 +511,15 @@ mod tests {
 
     #[test]
     fn next_completion_uses_smallest_job_id_on_tie() {
-        let workloads = standard_workload_family(1.0).unwrap();
-        let scenario =
-            build_base_scenario(workloads.get("exponential").unwrap().clone(), "_test_tie")
-                .unwrap();
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
+        let scenario = build_base_scenario_from_values(
+            &values,
+            workloads.get("exponential").unwrap().clone(),
+            "_test_tie",
+        )
+        .unwrap();
 
         let mut state = SystemState::new();
         let job1 = Job::with_remaining_workload(1, 0.0, 1, 1.0, 1.0).unwrap();
@@ -525,8 +535,11 @@ mod tests {
 
     #[test]
     fn can_reject_for_resource_limit() {
-        let workloads = standard_workload_family(1.0).unwrap();
-        let scenario = build_base_scenario(
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
+        let scenario = build_base_scenario_from_values(
+            &values,
             workloads.get("exponential").unwrap().clone(),
             "_test_resource",
         )

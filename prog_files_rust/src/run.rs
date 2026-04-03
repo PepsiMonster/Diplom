@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::collections::BTreeMap;
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -11,10 +13,9 @@ use crate::experiments::{
     ExperimentSuiteResult, ExperimentsError,
 };
 use crate::params::{
-    build_sensitivity_scenarios, standard_workload_family, ParamsError, ScenarioConfig,
-};
-use crate::plots::{
-    generate_standard_plots, load_suite_data, resolve_suite_result_json, PlotSuiteData, PlotsError,
+    build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
+    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError,
+    ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -33,9 +34,6 @@ pub enum RunError {
     Experiments(#[from] ExperimentsError),
 
     #[error(transparent)]
-    Plots(#[from] PlotsError),
-
-    #[error(transparent)]
     Io(#[from] std::io::Error),
 
     #[error(transparent)]
@@ -43,6 +41,13 @@ pub enum RunError {
 }
 
 type Result<T> = std::result::Result<T, RunError>;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct PlotSuiteData {
+    suite_name: String,
+    created_at: String,
+    scenario_results: BTreeMap<String, serde_json::Value>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ScenarioFamily {
@@ -199,6 +204,65 @@ fn ensure_dir(path: impl AsRef<Path>) -> Result<PathBuf> {
     let path_obj = path.as_ref().to_path_buf();
     fs::create_dir_all(&path_obj)?;
     Ok(path_obj)
+}
+
+fn resolve_suite_result_json(input_path: impl AsRef<Path>) -> Result<PathBuf> {
+    let path = input_path.as_ref();
+
+    if path.is_dir() {
+        let candidate = path.join("suite_result.json");
+        if !candidate.exists() {
+            return Err(RunError::Validation(format!(
+                "В директории '{}' не найден файл suite_result.json",
+                path.display()
+            )));
+        }
+        return Ok(candidate);
+    }
+
+    if path.is_file() {
+        let is_json = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|s| s.eq_ignore_ascii_case("json"))
+            .unwrap_or(false);
+        if !is_json {
+            return Err(RunError::Validation(format!(
+                "Ожидался JSON-файл результата или директория результата, получено: {}",
+                path.display()
+            )));
+        }
+        return Ok(path.to_path_buf());
+    }
+
+    Err(RunError::Validation(format!(
+        "Путь не найден: {}",
+        path.display()
+    )))
+}
+
+fn load_suite_data(input_path: impl AsRef<Path>) -> Result<PlotSuiteData> {
+    let json_path = resolve_suite_result_json(input_path)?;
+    let text = fs::read_to_string(json_path)?;
+    Ok(serde_json::from_str(&text)?)
+}
+
+fn collect_png_paths(output_dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
+    let mut pngs = Vec::new();
+    for entry in fs::read_dir(output_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let is_png = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("png"))
+            .unwrap_or(false);
+        if is_png {
+            pngs.push(path);
+        }
+    }
+    pngs.sort();
+    Ok(pngs)
 }
 
 fn make_run_root(base_dir: impl AsRef<Path>, prefix: &str) -> Result<PathBuf> {
@@ -558,14 +622,79 @@ fn save_plots_report(
     save_markdown_report(&lines, parent.join("plots_report.md"))
 }
 
+fn run_python_plots(
+    input_path: impl AsRef<Path>,
+    output_dir: impl AsRef<Path>,
+    metrics: &[String],
+    dpi: u32,
+) -> Result<()> {
+    let script_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("py")
+        .join("plots.py");
+
+    let script_arg = script_path.to_string_lossy().to_string();
+    let input_arg = input_path.as_ref().to_string_lossy().to_string();
+    let output_arg = output_dir.as_ref().to_string_lossy().to_string();
+    let dpi_arg = dpi.to_string();
+
+    let metrics_args: Vec<String> = metrics.to_vec();
+
+    let candidate_commands: Vec<(&str, Vec<String>)> = vec![
+        ("python3", vec![script_arg.clone()]),
+        ("python", vec![script_arg.clone()]),
+        ("py", vec!["-3".to_string(), script_arg.clone()]),
+    ];
+
+    let mut launch_errors = Vec::new();
+
+    for (program, mut base_args) in candidate_commands {
+        base_args.push("--input".to_string());
+        base_args.push(input_arg.clone());
+        base_args.push("--output-dir".to_string());
+        base_args.push(output_arg.clone());
+        base_args.push("--dpi".to_string());
+        base_args.push(dpi_arg.clone());
+
+        if !metrics_args.is_empty() {
+            base_args.push("--metrics".to_string());
+            base_args.extend(metrics_args.iter().cloned());
+        }
+
+        match Command::new(program).args(&base_args).output() {
+            Ok(output) => {
+                if output.status.success() {
+                    return Ok(());
+                }
+
+                launch_errors.push(format!(
+                    "{program}: exit_code={:?}, stderr={}",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Err(e) => {
+                launch_errors.push(format!("{program}: {e}"));
+            }
+        }
+    }
+
+    Err(RunError::Validation(format!(
+        "Не удалось запустить Python plotting. Пробовали python3/python/py -3.\n{}",
+        launch_errors.join("\n")
+    )))
+}
+
 fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
-    let workloads = standard_workload_family(args.mean_workload)?;
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
+    let workloads = standard_workload_family_from_values(&values)?;
     let workload = workloads
         .get("exponential")
         .cloned()
         .ok_or_else(|| RunError::Validation("Не найден workload 'exponential'".to_string()))?;
 
-    let base = crate::params::build_base_scenario(workload, "")?;
+    let base = build_base_scenario_from_values(&values, workload, "")?;
     let scenario = override_simulation_config(
         &base,
         args.max_time,
@@ -581,9 +710,12 @@ fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
 fn build_suite_scenarios(
     args: &SuiteArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -606,9 +738,12 @@ fn build_suite_scenarios(
 fn build_full_scenarios(
     args: &FullArgs,
 ) -> Result<std::collections::BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = args.mean_workload;
+
     let scenarios = match args.scenario_family {
         ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios(args.mean_workload)?,
+        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -674,13 +809,8 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
     )?;
     let suite_data = load_suite_data(&suite_dir)?;
     let plots_dir = suite_dir.join("plots");
-    let metric_refs: Vec<&str> = args.metrics.iter().map(String::as_str).collect();
-    let extra_metrics = if metric_refs.is_empty() {
-        None
-    } else {
-        Some(metric_refs.as_slice())
-    };
-    let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics, 200)?;
+    let created = collect_png_paths(&plots_dir)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
@@ -713,14 +843,8 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
         json_path.parent().unwrap_or(Path::new(".")).join("plots")
     };
 
-    let metric_refs: Vec<&str> = args.metrics.iter().map(String::as_str).collect();
-    let extra_metrics = if metric_refs.is_empty() {
-        None
-    } else {
-        Some(metric_refs.as_slice())
-    };
-
-    let created = generate_standard_plots(&suite_data, &output_dir, extra_metrics)?;
+    run_python_plots(&args.input, &output_dir, &args.metrics, args.dpi)?;
+    let created = collect_png_paths(&output_dir)?;
 
     println!("{}", "=".repeat(80));
     println!("Папка с графиками: {}", output_dir.display());
@@ -752,15 +876,8 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
 
     let suite_data = load_suite_data(&suite_dir)?;
     let plots_dir = suite_dir.join("plots");
-
-    let metric_refs: Vec<&str> = args.metrics.iter().map(String::as_str).collect();
-    let extra_metrics = if metric_refs.is_empty() {
-        None
-    } else {
-        Some(metric_refs.as_slice())
-    };
-
-    let created = generate_standard_plots(&suite_data, &plots_dir, extra_metrics)?;
+    run_python_plots(&suite_dir, &plots_dir, &args.metrics, args.dpi)?;
+    let created = collect_png_paths(&plots_dir)?;
     let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
@@ -808,9 +925,11 @@ mod tests {
 
     #[test]
     fn override_simulation_config_works() {
-        let workloads = standard_workload_family(1.0).unwrap();
+        let mut values = load_default_external_experiment_values().unwrap();
+        values.mean_workload = 1.0;
+        let workloads = standard_workload_family_from_values(&values).unwrap();
         let workload = workloads.get("exponential").unwrap().clone();
-        let base = crate::params::build_base_scenario(workload, "").unwrap();
+        let base = build_base_scenario_from_values(&values, workload, "").unwrap();
 
         let updated =
             override_simulation_config(&base, Some(123.0), Some(12.0), Some(7), true, true);
