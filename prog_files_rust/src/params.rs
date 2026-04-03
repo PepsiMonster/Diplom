@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::Path;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -9,6 +11,63 @@ pub enum ParamsError {
 }
 
 type Result<T> = std::result::Result<T, ParamsError>;
+
+pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str =
+    "py/generated/experiment_values.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalExperimentValues {
+    pub suite_name: String,
+    pub mean_workload: f64,
+    pub replications: usize,
+    pub max_time: f64,
+    pub warmup_time: f64,
+    pub base_seed: u64,
+
+    pub capacity_k: usize,
+    pub servers_n: usize,
+    pub total_resource_r: u32,
+
+    pub arrival_normal_value: f64,
+    pub arrival_threshold_offset: usize,
+    pub arrival_reduced_value: f64,
+    pub arrival_full_state_value: f64,
+
+    pub service_start_value: f64,
+    pub service_step: f64,
+    pub service_floor_value: f64,
+
+    pub resource_values: Vec<u32>,
+    pub resource_probabilities: Vec<f64>,
+
+    pub workload_family: Vec<String>,
+    pub workload_hyperexp_p: f64,
+    pub workload_hyperexp_fast_multiplier: f64,
+    pub workload_hyperexp_heavy_p: f64,
+    pub workload_hyperexp_heavy_fast_multiplier: f64,
+
+    pub arrival_process_family: Vec<String>,
+}
+
+pub fn load_external_experiment_values(path: impl AsRef<Path>) -> Result<ExternalExperimentValues> {
+    let text = fs::read_to_string(path).map_err(|e| {
+        ParamsError::Validation(format!(
+            "Не удалось прочитать файл внешних параметров: {e}"
+        ))
+    })?;
+
+    let values: ExternalExperimentValues = serde_json::from_str(&text).map_err(|e| {
+        ParamsError::Validation(format!(
+            "Не удалось распарсить JSON внешних параметров: {e}"
+        ))
+    })?;
+
+    Ok(values)
+}
+
+pub fn load_default_external_experiment_values() -> Result<ExternalExperimentValues> {
+    load_external_experiment_values(DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH)
+}
 
 fn ensure_positive_f64(name: &str, value: f64) -> Result<()> {
     if value <= 0.0 {
@@ -610,105 +669,184 @@ pub fn linear_decreasing_profile(
         .collect())
 }
 
-pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDistributionConfig>> {
-    ensure_positive_f64("mean", mean)?;
+pub fn standard_workload_family_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, WorkloadDistributionConfig>> {
+    ensure_positive_f64("mean_workload", values.mean_workload)?;
 
     let mut family = BTreeMap::new();
-    family.insert(
-        "deterministic".to_string(),
-        WorkloadDistributionConfig::deterministic(mean, "Deterministic")?,
-    );
-    family.insert(
-        "exponential".to_string(),
-        WorkloadDistributionConfig::exponential(mean, "Exponential")?,
-    );
-    family.insert(
-        "erlang_2".to_string(),
-        WorkloadDistributionConfig::erlang(mean, 2, Some("Erlang(2)".to_string()))?,
-    );
-    family.insert(
-        "erlang_4".to_string(),
-        WorkloadDistributionConfig::erlang(mean, 4, Some("Erlang(4)".to_string()))?,
-    );
-    family.insert(
-        "erlang_8".to_string(),
-        WorkloadDistributionConfig::erlang(mean, 8, Some("Erlang(8)".to_string()))?,
-    );
-    family.insert(
-        "hyperexp_2".to_string(),
-        WorkloadDistributionConfig::hyperexponential2(mean, 0.75, 4.0, "HyperExp(2)")?,
-    );
-    family.insert(
-        "hyperexp_heavy".to_string(),
-        WorkloadDistributionConfig::hyperexponential2(mean, 0.85, 6.0, "HyperExpHeavy")?,
-    );
+    for key in &values.workload_family {
+        let workload_cfg = match key.as_str() {
+            "deterministic" => WorkloadDistributionConfig::deterministic(
+                values.mean_workload,
+                "Deterministic",
+            )?,
+            "exponential" => {
+                WorkloadDistributionConfig::exponential(values.mean_workload, "Exponential")?
+            }
+            "erlang_2" => WorkloadDistributionConfig::erlang(
+                values.mean_workload,
+                2,
+                Some("Erlang(2)".to_string()),
+            )?,
+            "erlang_4" => WorkloadDistributionConfig::erlang(
+                values.mean_workload,
+                4,
+                Some("Erlang(4)".to_string()),
+            )?,
+            "erlang_8" => WorkloadDistributionConfig::erlang(
+                values.mean_workload,
+                8,
+                Some("Erlang(8)".to_string()),
+            )?,
+            "hyperexp_2" => WorkloadDistributionConfig::hyperexponential2(
+                values.mean_workload,
+                values.workload_hyperexp_p,
+                values.workload_hyperexp_fast_multiplier,
+                "HyperExp(2)",
+            )?,
+            "hyperexp_heavy" => WorkloadDistributionConfig::hyperexponential2(
+                values.mean_workload,
+                values.workload_hyperexp_heavy_p,
+                values.workload_hyperexp_heavy_fast_multiplier,
+                "HyperExpHeavy",
+            )?,
+            _ => {
+                return Err(ParamsError::Validation(format!(
+                    "Неизвестный тип workload_distribution в workload_family: '{key}'"
+                )));
+            }
+        };
+        family.insert(key.clone(), workload_cfg);
+    }
 
     Ok(family)
 }
 
-pub fn build_base_simulation_config() -> Result<SimulationConfig> {
+pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDistributionConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = mean;
+    standard_workload_family_from_values(&values)
+}
+
+pub fn build_simulation_config_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<SimulationConfig> {
     let cfg = SimulationConfig {
-        max_time: 200_000.0,
-        warmup_time: 40_000.0,
-        replications: 30,
+        max_time: values.max_time,
+        warmup_time: values.warmup_time,
+        seed: values.base_seed,
+        replications: values.replications,
         ..SimulationConfig::default()
     };
     cfg.validate()?;
     Ok(cfg)
 }
 
-pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> {
+pub fn build_base_simulation_config() -> Result<SimulationConfig> {
+    let values = load_default_external_experiment_values()?;
+    build_simulation_config_from_values(&values)
+}
+
+pub fn build_resource_distribution_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<ResourceDistributionConfig> {
     let cfg = ResourceDistributionConfig::DiscreteCustom {
-        values: vec![2, 4, 8, 12, 16],
-        probabilities: vec![0.30, 0.30, 0.20, 0.15, 0.05],
+        values: values.resource_values.clone(),
+        probabilities: values.resource_probabilities.clone(),
     };
     cfg.validate()?;
     Ok(cfg)
 }
 
+pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> {
+    let values = load_default_external_experiment_values()?;
+    build_resource_distribution_from_values(&values)
+}
+
+pub fn build_arrival_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
+    let threshold_k = values
+        .capacity_k
+        .saturating_sub(values.arrival_threshold_offset);
+
+    threshold_profile(
+        values.capacity_k,
+        values.arrival_normal_value,
+        threshold_k,
+        values.arrival_reduced_value,
+        values.arrival_full_state_value,
+    )
+}
+
 pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
-    threshold_profile(capacity_k, 3.20, capacity_k.saturating_sub(4), 2.20, 0.0)
+    let mut values = load_default_external_experiment_values()?;
+    values.capacity_k = capacity_k;
+    build_arrival_profile_from_values(&values)
+}
+
+pub fn build_service_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
+    linear_decreasing_profile(
+        values.capacity_k,
+        values.service_start_value,
+        values.service_step,
+        values.service_floor_value,
+    )
 }
 
 pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
-    linear_decreasing_profile(capacity_k, 1.40, 0.07, 0.35)
+    let mut values = load_default_external_experiment_values()?;
+    values.capacity_k = capacity_k;
+    build_service_profile_from_values(&values)
 }
 
-pub fn build_base_scenario(
+pub fn build_base_scenario_from_values(
+    values: &ExternalExperimentValues,
     workload_distribution: WorkloadDistributionConfig,
     name_suffix: &str,
 ) -> Result<ScenarioConfig> {
-    let capacity_k = 20;
-    let servers_n = 12;
-    let total_resource_r = 40;
-
     let scenario = ScenarioConfig {
         name: format!("base{name_suffix}"),
-        capacity_k,
-        servers_n,
-        total_resource_r,
-        arrival_rate_by_state: build_base_arrival_profile(capacity_k)?,
-        service_speed_by_state: build_base_service_profile(capacity_k)?,
-        resource_distribution: build_base_resource_distribution()?,
+        capacity_k: values.capacity_k,
+        servers_n: values.servers_n,
+        total_resource_r: values.total_resource_r,
+        arrival_rate_by_state: build_arrival_profile_from_values(values)?,
+        service_speed_by_state: build_service_profile_from_values(values)?,
+        resource_distribution: build_resource_distribution_from_values(values)?,
         workload_distribution,
-        simulation: build_base_simulation_config()?,
-        note: "Базовый напряжённый сценарий для анализа чувствительности ресурсной СМО к распределению объёма работ.".to_string(),
+        simulation: build_simulation_config_from_values(values)?,
+        note: "Сценарий, собранный из внешнего Python-конфига.".to_string(),
     };
 
     scenario.validate()?;
     Ok(scenario)
 }
 
-pub fn build_sensitivity_scenarios(mean_workload: f64) -> Result<BTreeMap<String, ScenarioConfig>> {
-    let family = standard_workload_family(mean_workload)?;
+pub fn build_base_scenario(
+    workload_distribution: WorkloadDistributionConfig,
+    name_suffix: &str,
+) -> Result<ScenarioConfig> {
+    let values = load_default_external_experiment_values()?;
+    build_base_scenario_from_values(&values, workload_distribution, name_suffix)
+}
+
+pub fn build_sensitivity_scenarios_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ScenarioConfig>> {
+    let family = standard_workload_family_from_values(values)?;
     let mut scenarios = BTreeMap::new();
 
     for (key, workload_cfg) in family {
-        let scenario = build_base_scenario(workload_cfg, &format!("_{key}"))?;
+        let scenario = build_base_scenario_from_values(values, workload_cfg, &format!("_{key}"))?;
         scenarios.insert(key, scenario);
     }
 
     Ok(scenarios)
+}
+
+pub fn build_sensitivity_scenarios(mean_workload: f64) -> Result<BTreeMap<String, ScenarioConfig>> {
+    let mut values = load_default_external_experiment_values()?;
+    values.mean_workload = mean_workload;
+    build_sensitivity_scenarios_from_values(&values)
 }
 
 pub fn print_scenario_summary(scenario: &ScenarioConfig) -> Result<()> {
@@ -717,7 +855,8 @@ pub fn print_scenario_summary(scenario: &ScenarioConfig) -> Result<()> {
 }
 
 pub fn self_test() -> Result<()> {
-    let scenarios = build_sensitivity_scenarios(1.0)?;
+    let values = load_default_external_experiment_values()?;
+    let scenarios = build_sensitivity_scenarios_from_values(&values)?;
 
     println!("\nПроверка params.rs: построение типовых сценариев завершено.\n");
     println!("Собрано сценариев: {}\n", scenarios.len());
