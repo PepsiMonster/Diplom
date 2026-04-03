@@ -607,13 +607,23 @@ fn save_plots_report(
     if !created_paths.is_empty() {
         lines.push(String::new());
         lines.push("## Встроенные графики".to_string());
+
+        let report_dir = output_dir.parent().unwrap_or(output_dir);
+
         for image_path in created_paths {
             let filename = image_path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or("plot.png");
+
+            let relative_path = image_path
+                .strip_prefix(report_dir)
+                .unwrap_or(image_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
             lines.push(format!("### {}", filename));
-            lines.push(format!("![{}]({})", filename, filename));
+            lines.push(format!("![{}]({})", filename, relative_path));
             lines.push(String::new());
         }
     }
