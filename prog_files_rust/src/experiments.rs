@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::params::{
-    build_sensitivity_scenarios_from_values, load_default_external_experiment_values,
-    ExternalExperimentValues, ParamsError, ScenarioConfig,
+    build_base_scenario_from_values, load_default_external_experiment_values,
+    standard_workload_family_from_values, ExternalExperimentValues, ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -501,6 +501,34 @@ fn suite_to_json_ready(suite_result: &ExperimentSuiteResult) -> Value {
     })
 }
 
+fn save_full_run_results_if_present(
+    suite_result: &ExperimentSuiteResult,
+    output_path: &Path,
+) -> Result<()> {
+    let base = output_path.join("full_run_results");
+    let mut any_saved = false;
+
+    for (scenario_key, result) in &suite_result.scenario_results {
+        if result.run_results.is_empty() {
+            continue;
+        }
+        any_saved = true;
+        let scenario_dir = base.join(scenario_key);
+        fs::create_dir_all(&scenario_dir)?;
+        for run in &result.run_results {
+            let file_name = format!("run_{:04}.json", run.replication_index);
+            let path = scenario_dir.join(file_name);
+            fs::write(path, serde_json::to_string_pretty(run)?)?;
+        }
+    }
+
+    if !any_saved && base.exists() {
+        fs::remove_dir_all(base)?;
+    }
+
+    Ok(())
+}
+
 pub fn save_experiment_suite(
     suite_result: &ExperimentSuiteResult,
     output_dir: impl AsRef<Path>,
@@ -523,6 +551,7 @@ pub fn save_experiment_suite(
         output_path.join("suite_result.json"),
         serde_json::to_string_pretty(&json_payload)?,
     )?;
+    save_full_run_results_if_present(suite_result, &output_path)?;
 
     Ok(output_path)
 }
@@ -538,7 +567,21 @@ pub fn build_default_experiment_suite(
 pub fn build_default_experiment_suite_from_values(
     values: &ExternalExperimentValues,
 ) -> Result<BTreeMap<String, ScenarioConfig>> {
-    Ok(build_sensitivity_scenarios_from_values(values)?)
+    let workload_family = standard_workload_family_from_values(values)?;
+    let baseline_workload = workload_family
+        .get("deterministic")
+        .cloned()
+        .or_else(|| workload_family.values().next().cloned())
+        .ok_or_else(|| {
+            ExperimentsError::Validation(
+                "Не удалось выбрать baseline workload для default-сценария".to_string(),
+            )
+        })?;
+    let baseline = build_base_scenario_from_values(values, baseline_workload, "")?;
+
+    let mut scenarios = BTreeMap::new();
+    scenarios.insert("baseline".to_string(), baseline);
+    Ok(scenarios)
 }
 
 pub fn self_test() -> Result<()> {

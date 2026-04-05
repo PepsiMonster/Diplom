@@ -37,6 +37,12 @@ pub struct ExternalExperimentValues {
     pub warmup_time: f64,
     pub base_seed: u64,
     #[serde(default)]
+    pub record_state_trace: bool,
+    #[serde(default)]
+    pub save_event_log: bool,
+    #[serde(default)]
+    pub keep_full_run_results: bool,
+    #[serde(default)]
     pub system_architecture: SystemArchitecture,
     #[serde(default)]
     pub queue_capacity: usize,
@@ -781,6 +787,8 @@ pub fn build_simulation_config_from_values(
         warmup_time: values.warmup_time,
         seed: values.base_seed,
         replications: values.replications,
+        record_state_trace: values.record_state_trace,
+        save_event_log: values.save_event_log,
         ..SimulationConfig::default()
     };
     cfg.validate()?;

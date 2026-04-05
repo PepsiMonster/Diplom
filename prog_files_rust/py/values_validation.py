@@ -142,6 +142,18 @@ def validate_experiment_values(values_module: ModuleType) -> None:
         _is_nonnegative_int(values_module.BASE_SEED),
         f"BASE_SEED должен быть целым >= 0, получено: {values_module.BASE_SEED!r}",
     )
+    _require(
+        isinstance(values_module.RECORD_STATE_TRACE, bool),
+        f"RECORD_STATE_TRACE должен быть bool, получено: {values_module.RECORD_STATE_TRACE!r}",
+    )
+    _require(
+        isinstance(values_module.SAVE_EVENT_LOG, bool),
+        f"SAVE_EVENT_LOG должен быть bool, получено: {values_module.SAVE_EVENT_LOG!r}",
+    )
+    _require(
+        isinstance(values_module.KEEP_FULL_RUN_RESULTS, bool),
+        f"KEEP_FULL_RUN_RESULTS должен быть bool, получено: {values_module.KEEP_FULL_RUN_RESULTS!r}",
+    )
 
     _require(
         _is_positive_int(values_module.CAPACITY_K),

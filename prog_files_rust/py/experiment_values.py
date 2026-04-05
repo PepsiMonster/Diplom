@@ -6,7 +6,7 @@
 # Выбор архитектуры системы:
 # "loss"   — система без очереди;
 # "buffer" — система с конечной очередью Q = K - N.
-SYSTEM_ARCHITECTURE = "loss"
+SYSTEM_ARCHITECTURE = "buffer"
 
 # Имя серии экспериментов. Используется как метка результатов и папок.
 SUITE_NAME = "baseline"
@@ -31,13 +31,21 @@ WARMUP_TIME = 40_000.0
 # Базовый seed для воспроизводимости.
 BASE_SEED = 42
 
+# Флаги детализации результатов:
+# - RECORD_STATE_TRACE: сохранять временную траекторию состояния
+# - SAVE_EVENT_LOG: сохранять журнал событий (arrival/departure/queue promotion)
+# - KEEP_FULL_RUN_RESULTS: сохранять полные результаты прогонов для per-run JSON
+RECORD_STATE_TRACE = False
+SAVE_EVENT_LOG = False
+KEEP_FULL_RUN_RESULTS = False
+
 
 # ==========================================
 # Параметры базовой ресурсной системы
 # ==========================================
 
 # Максимальное число заявок в системе.
-CAPACITY_K = 12
+CAPACITY_K = 18
 
 # Число обслуживающих приборов / каналов.
 SERVERS_N = 12

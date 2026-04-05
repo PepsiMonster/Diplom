@@ -35,25 +35,33 @@ def default_output_root() -> Path:
 
 def run_rust_full(
     release: bool,
-    suite_name: str | None,
+    suite_name: str,
     replications: int | None,
     max_time: float | None,
     warmup_time: float | None,
     output_root: Path,
+    record_state_trace: bool,
+    save_event_log: bool,
+    keep_full_run_results: bool,
 ) -> None:
     cmd = ["cargo", "run"]
     if release:
         cmd.append("--release")
     cmd.extend(["--", "full"])
 
-    if suite_name:
-        cmd.extend(["--suite-name", suite_name])
+    cmd.extend(["--suite-name", suite_name])
     if replications is not None:
         cmd.extend(["--replications", str(replications)])
     if max_time is not None:
         cmd.extend(["--max-time", str(max_time)])
     if warmup_time is not None:
         cmd.extend(["--warmup-time", str(warmup_time)])
+    if record_state_trace:
+        cmd.append("--record-state-trace")
+    if save_event_log:
+        cmd.append("--save-event-log")
+    if keep_full_run_results:
+        cmd.append("--keep-full-run-results")
 
     cmd.extend(["--output-root", str(output_root)])
 
@@ -81,16 +89,21 @@ def main() -> None:
     print(f"JSON создан: {out}")
 
     output_root = default_output_root()
+    suite_name = args.suite_name if args.suite_name else v.SUITE_NAME
     print(f"Выходная директория для результатов: {output_root}")
+    print(f"Имя серии: {suite_name}")
 
     print("Шаг 3/3: Запускаем Rust full pipeline...")
     run_rust_full(
         release=args.release,
-        suite_name=args.suite_name,
+        suite_name=suite_name,
         replications=args.replications,
         max_time=args.max_time,
         warmup_time=args.warmup_time,
         output_root=output_root,
+        record_state_trace=v.RECORD_STATE_TRACE,
+        save_event_log=v.SAVE_EVENT_LOG,
+        keep_full_run_results=v.KEEP_FULL_RUN_RESULTS,
     )
     print("Готово.")
 

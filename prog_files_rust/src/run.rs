@@ -14,8 +14,7 @@ use crate::experiments::{
 };
 use crate::params::{
     build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
-    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError,
-    ScenarioConfig,
+    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -806,12 +805,14 @@ pub fn run_single_mode(args: &SingleArgs) -> Result<PathBuf> {
 }
 
 pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
+    let values = load_default_external_experiment_values()?;
+    let keep_full_run_results = args.keep_full_run_results || values.keep_full_run_results;
     let scenarios = build_suite_scenarios(args)?;
     let suite_result = run_experiment_suite(
         &scenarios,
         &args.suite_name,
         args.ci_level,
-        args.keep_full_run_results,
+        keep_full_run_results,
     )?;
 
     let output_root = make_timestamped_dir(&args.output_root)?;
@@ -871,12 +872,14 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
 }
 
 pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
+    let values = load_default_external_experiment_values()?;
+    let keep_full_run_results = args.keep_full_run_results || values.keep_full_run_results;
     let scenarios = build_full_scenarios(args)?;
     let suite_result = run_experiment_suite(
         &scenarios,
         &args.suite_name,
         args.ci_level,
-        args.keep_full_run_results,
+        keep_full_run_results,
     )?;
 
     let suite_dir = make_timestamped_dir(&args.output_root)?;
