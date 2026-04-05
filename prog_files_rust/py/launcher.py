@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import experiment_values as v
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PY_DIR = PROJECT_ROOT / "py"
@@ -23,12 +25,21 @@ def generate_experiment_json() -> Path:
     return out
 
 
+def default_output_root() -> Path:
+    if v.SYSTEM_ARCHITECTURE == "loss":
+        return PROJECT_ROOT / "results" / "loss"
+    if v.SYSTEM_ARCHITECTURE == "buffer":
+        return PROJECT_ROOT / "results" / "buffered"
+    raise ValueError(f"Неизвестная архитектура: {v.SYSTEM_ARCHITECTURE!r}")
+
+
 def run_rust_full(
     release: bool,
     suite_name: str | None,
     replications: int | None,
     max_time: float | None,
     warmup_time: float | None,
+    output_root: Path,
 ) -> None:
     cmd = ["cargo", "run"]
     if release:
@@ -44,6 +55,8 @@ def run_rust_full(
     if warmup_time is not None:
         cmd.extend(["--warmup-time", str(warmup_time)])
 
+    cmd.extend(["--output-root", str(output_root)])
+
     run_command(cmd, cwd=PROJECT_ROOT)
 
 
@@ -51,7 +64,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "1) Берёт значения из py/experiment_values.py, "
-            "2) генерирует py/generated/experiment_values.json, "
+            "2) валидирует и генерирует py/generated/experiment_values.json, "
             "3) запускает `cargo run -- full`."
         )
     )
@@ -67,6 +80,9 @@ def main() -> None:
     out = generate_experiment_json()
     print(f"JSON создан: {out}")
 
+    output_root = default_output_root()
+    print(f"Выходная директория для результатов: {output_root}")
+
     print("Шаг 3/3: Запускаем Rust full pipeline...")
     run_rust_full(
         release=args.release,
@@ -74,6 +90,7 @@ def main() -> None:
         replications=args.replications,
         max_time=args.max_time,
         warmup_time=args.warmup_time,
+        output_root=output_root,
     )
     print("Готово.")
 

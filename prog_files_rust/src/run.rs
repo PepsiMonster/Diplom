@@ -265,8 +265,12 @@ fn collect_png_paths(output_dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
     Ok(pngs)
 }
 
-fn make_run_root(base_dir: impl AsRef<Path>, prefix: &str) -> Result<PathBuf> {
-    ensure_dir(base_dir.as_ref().join(prefix).join(timestamp()))
+fn make_timestamped_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
+    ensure_dir(base_dir.as_ref().join(timestamp()))
+}
+
+fn make_single_run_root(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
+    ensure_dir(base_dir.as_ref().join("single").join(timestamp()))
 }
 
 fn override_simulation_config(
@@ -778,7 +782,7 @@ pub fn run_single_mode(args: &SingleArgs) -> Result<PathBuf> {
 
     let result = simulate_one_run(scenario.clone(), args.replication_index, args.seed)?;
 
-    let output_root = make_run_root(&args.output_root, "single")?;
+    let output_root = make_single_run_root(&args.output_root)?;
     let json_path = save_single_run_result(&result, &output_root)?;
     let report_path = save_single_run_report(&result, &scenario, args, &output_root, &json_path)?;
     let txt_summary_path = save_text_report(
@@ -810,7 +814,7 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         args.keep_full_run_results,
     )?;
 
-    let output_root = make_run_root(&args.output_root, "experiments")?;
+    let output_root = make_timestamped_dir(&args.output_root)?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
     let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
     let txt_summary_path = save_text_report(
@@ -875,7 +879,7 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
         args.keep_full_run_results,
     )?;
 
-    let suite_dir = make_run_root(&args.output_root, "experiments")?;
+    let suite_dir = make_timestamped_dir(&args.output_root)?;
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
     let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;
