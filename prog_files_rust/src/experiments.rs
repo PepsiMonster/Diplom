@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::params::{
-    build_base_scenario_from_values, load_default_external_experiment_values,
-    standard_workload_family_from_values, ExternalExperimentValues, ParamsError, ScenarioConfig,
+    build_sensitivity_scenarios_from_values, load_default_external_experiment_values,
+    ExternalExperimentValues, ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -567,21 +567,7 @@ pub fn build_default_experiment_suite(
 pub fn build_default_experiment_suite_from_values(
     values: &ExternalExperimentValues,
 ) -> Result<BTreeMap<String, ScenarioConfig>> {
-    let workload_family = standard_workload_family_from_values(values)?;
-    let baseline_workload = workload_family
-        .get("deterministic")
-        .cloned()
-        .or_else(|| workload_family.values().next().cloned())
-        .ok_or_else(|| {
-            ExperimentsError::Validation(
-                "Не удалось выбрать baseline workload для default-сценария".to_string(),
-            )
-        })?;
-    let baseline = build_base_scenario_from_values(values, baseline_workload, "")?;
-
-    let mut scenarios = BTreeMap::new();
-    scenarios.insert("baseline".to_string(), baseline);
-    Ok(scenarios)
+    Ok(build_sensitivity_scenarios_from_values(values)?)
 }
 
 pub fn self_test() -> Result<()> {

@@ -35,9 +35,9 @@ BASE_SEED = 42
 # - RECORD_STATE_TRACE: сохранять временную траекторию состояния
 # - SAVE_EVENT_LOG: сохранять журнал событий (arrival/departure/queue promotion)
 # - KEEP_FULL_RUN_RESULTS: сохранять полные результаты прогонов для per-run JSON
-RECORD_STATE_TRACE = False
-SAVE_EVENT_LOG = False
-KEEP_FULL_RUN_RESULTS = False
+RECORD_STATE_TRACE = True
+SAVE_EVENT_LOG = True
+KEEP_FULL_RUN_RESULTS = True
 
 
 # ==========================================
@@ -51,7 +51,7 @@ CAPACITY_K = 18
 SERVERS_N = 12
 
 # Общий объём доступного ресурса.
-TOTAL_RESOURCE_R = 40
+TOTAL_RESOURCE_R = 72
 
 
 # ==========================================
