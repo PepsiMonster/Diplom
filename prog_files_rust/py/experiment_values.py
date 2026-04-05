@@ -35,8 +35,8 @@ BASE_SEED = 42
 # - RECORD_STATE_TRACE: сохранять временную траекторию состояния
 # - SAVE_EVENT_LOG: сохранять журнал событий (arrival/departure/queue promotion)
 # - KEEP_FULL_RUN_RESULTS: сохранять полные результаты прогонов для per-run JSON
-RECORD_STATE_TRACE = True
-SAVE_EVENT_LOG = True
+RECORD_STATE_TRACE = False
+SAVE_EVENT_LOG = False
 KEEP_FULL_RUN_RESULTS = True
 
 
