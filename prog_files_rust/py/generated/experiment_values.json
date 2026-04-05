@@ -12,7 +12,7 @@
   "queue_capacity": 6,
   "capacity_k": 18,
   "servers_n": 12,
-  "total_resource_r": 72,
+  "total_resource_r": 96,
   "arrival_normal_value": 3.2,
   "arrival_threshold_offset": 4,
   "arrival_reduced_value": 2.2,
