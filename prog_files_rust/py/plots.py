@@ -528,9 +528,6 @@ def generate_standard_plots(
         "mean_occupied_resource",
         "loss_probability",
         "throughput",
-        "accepted_arrivals",
-        "rejected_arrivals",
-        "completed_jobs",
     ]
 
     if extra_metrics is not None:
@@ -539,6 +536,11 @@ def generate_standard_plots(
                 default_metrics.append(metric)
 
     available = set(available_metric_names(suite_data))
+
+    if "mean_queue_length" in available and "mean_queue_length" not in default_metrics:
+        default_metrics.append("mean_queue_length")
+    if "queueing_probability" in available and "queueing_probability" not in default_metrics:
+        default_metrics.append("queueing_probability")
 
     for metric in default_metrics:
         if metric in available:
@@ -552,7 +554,11 @@ def generate_standard_plots(
                 )
             )
 
-            if build_delta_plots and len(suite_data.scenario_keys()) >= 2:
+            if (
+                build_delta_plots
+                and metric in {"loss_probability", "throughput"}
+                and len(suite_data.scenario_keys()) >= 2
+            ):
                 created.append(
                     plot_metric_comparison_delta(
                         suite_data,
@@ -562,10 +568,11 @@ def generate_standard_plots(
                     )
                 )
 
-            try:
-                created.append(plot_metric_boxplot(suite_data, metric, out_dir, dpi=dpi))
-            except KeyError:
-                pass
+            if metric in {"loss_probability", "mean_queue_length"}:
+                try:
+                    created.append(plot_metric_boxplot(suite_data, metric, out_dir, dpi=dpi))
+                except KeyError:
+                    pass
 
     if any(name.startswith("pi_hat_") for name in available):
         created.append(plot_stationary_distribution_by_scenarios(suite_data, out_dir, dpi=dpi))
