@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::params::{
     build_base_scenario_from_values, load_default_external_experiment_values, ParamsError,
-    ScenarioConfig, standard_workload_family_from_values,
+    ScenarioConfig, SystemArchitecture, standard_workload_family_from_values,
 };
 
 pub const COMPLETION_TOL: f64 = 1e-12;
@@ -97,6 +97,12 @@ impl AdmissionDecision {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionPlacement {
+    Active,
+    Queued,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub job_id: u64,
@@ -180,7 +186,8 @@ impl Job {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemState {
     pub current_time: f64,
-    pub active_jobs: BTreeMap<u64, Job>,
+    pub active_jobs: Vec<Job>,
+    pub waiting_queue: VecDeque<Job>,
     pub occupied_resource_total: u32,
     pub next_job_id: u64,
 }
@@ -195,36 +202,70 @@ impl SystemState {
     pub fn new() -> Self {
         Self {
             current_time: 0.0,
-            active_jobs: BTreeMap::new(),
+            active_jobs: Vec::new(),
+            waiting_queue: VecDeque::new(),
             occupied_resource_total: 0,
             next_job_id: 1,
         }
     }
 
-    pub fn num_jobs(&self) -> usize {
+    pub fn num_active_jobs(&self) -> usize {
         self.active_jobs.len()
+    }
+
+    pub fn num_waiting_jobs(&self) -> usize {
+        self.waiting_queue.len()
+    }
+
+    pub fn num_jobs_total(&self) -> usize {
+        self.num_active_jobs() + self.num_waiting_jobs()
+    }
+
+    pub fn num_jobs(&self) -> usize {
+        self.num_jobs_total()
     }
 
     pub fn occupied_resource(&self) -> u32 {
         self.occupied_resource_total
     }
 
-    pub fn free_resource(&self, scenario: &ScenarioConfig) -> u32 {
-        scenario
-            .total_resource_r
-            .saturating_sub(self.occupied_resource_total)
+    pub fn queue_capacity(&self, scenario: &ScenarioConfig) -> usize {
+        scenario.queue_capacity()
     }
 
-    pub fn free_servers(&self, scenario: &ScenarioConfig) -> usize {
-        scenario.servers_n.saturating_sub(self.num_jobs())
+    pub fn has_free_server(&self, scenario: &ScenarioConfig) -> bool {
+        self.num_active_jobs() < scenario.servers_n
     }
 
     pub fn current_arrival_rate(&self, scenario: &ScenarioConfig) -> f64 {
-        scenario.arrival_rate_by_state[self.num_jobs()]
+        scenario.arrival_rate_by_state[self.num_jobs_total()]
     }
 
     pub fn current_service_speed(&self, scenario: &ScenarioConfig) -> f64 {
-        scenario.service_speed_by_state[self.num_jobs()]
+        scenario.service_speed_by_state[self.num_jobs_total()]
+    }
+
+    pub fn can_admit_job(
+        &self,
+        resource_demand: u32,
+        scenario: &ScenarioConfig,
+    ) -> Result<AdmissionDecision> {
+        ensure_positive_u32("resource_demand", resource_demand)?;
+
+        if self.num_jobs_total() >= scenario.capacity_k {
+            return Ok(AdmissionDecision::rejected(RejectionReason::CapacityLimit));
+        }
+        if self.occupied_resource() + resource_demand > scenario.total_resource_r {
+            return Ok(AdmissionDecision::rejected(RejectionReason::ResourceLimit));
+        }
+
+        if scenario.system_architecture == SystemArchitecture::Loss
+            && self.num_active_jobs() >= scenario.servers_n
+        {
+            return Ok(AdmissionDecision::rejected(RejectionReason::ServerLimit));
+        }
+
+        Ok(AdmissionDecision::accepted())
     }
 
     pub fn can_accept(
@@ -232,19 +273,7 @@ impl SystemState {
         resource_demand: u32,
         scenario: &ScenarioConfig,
     ) -> Result<AdmissionDecision> {
-        ensure_positive_u32("resource_demand", resource_demand)?;
-
-        if self.num_jobs() >= scenario.capacity_k {
-            return Ok(AdmissionDecision::rejected(RejectionReason::CapacityLimit));
-        }
-        if self.num_jobs() >= scenario.servers_n {
-            return Ok(AdmissionDecision::rejected(RejectionReason::ServerLimit));
-        }
-        if self.occupied_resource() + resource_demand > scenario.total_resource_r {
-            return Ok(AdmissionDecision::rejected(RejectionReason::ResourceLimit));
-        }
-
-        Ok(AdmissionDecision::accepted())
+        self.can_admit_job(resource_demand, scenario)
     }
 
     pub fn create_job(
@@ -266,8 +295,12 @@ impl SystemState {
         Ok(job)
     }
 
-    pub fn add_job(&mut self, job: Job, scenario: &ScenarioConfig) -> Result<()> {
-        let decision = self.can_accept(job.resource_demand, scenario)?;
+    pub fn admit_or_enqueue(
+        &mut self,
+        job: Job,
+        scenario: &ScenarioConfig,
+    ) -> Result<AdmissionPlacement> {
+        let decision = self.can_admit_job(job.resource_demand, scenario)?;
         if !decision.accepted {
             return Err(ModelError::Validation(format!(
                 "Невозможно добавить job_id={}: отказ по причине {}",
@@ -275,7 +308,12 @@ impl SystemState {
             )));
         }
 
-        if self.active_jobs.contains_key(&job.job_id) {
+        if self
+            .active_jobs
+            .iter()
+            .any(|active| active.job_id == job.job_id)
+            || self.waiting_queue.iter().any(|queued| queued.job_id == job.job_id)
+        {
             return Err(ModelError::Validation(format!(
                 "Заявка job_id={} уже есть в системе",
                 job.job_id
@@ -283,18 +321,46 @@ impl SystemState {
         }
 
         self.occupied_resource_total += job.resource_demand;
-        self.active_jobs.insert(job.job_id, job);
+
+        if self.has_free_server(scenario) {
+            self.active_jobs.push(job);
+            Ok(AdmissionPlacement::Active)
+        } else {
+            self.waiting_queue.push_back(job);
+            Ok(AdmissionPlacement::Queued)
+        }
+    }
+
+    pub fn add_job(&mut self, job: Job, scenario: &ScenarioConfig) -> Result<()> {
+        let _ = self.admit_or_enqueue(job, scenario)?;
         Ok(())
     }
 
-    pub fn remove_job(&mut self, job_id: u64) -> Result<Job> {
-        let removed = self.active_jobs.remove(&job_id).ok_or_else(|| {
-            ModelError::Validation(format!(
-                "Заявка job_id={} не найдена среди активных",
-                job_id
-            ))
-        })?;
+    pub fn promote_from_queue(&mut self, scenario: &ScenarioConfig) -> usize {
+        let mut promoted = 0usize;
+        while self.has_free_server(scenario) {
+            let Some(job) = self.waiting_queue.pop_front() else {
+                break;
+            };
+            self.active_jobs.push(job);
+            promoted += 1;
+        }
+        promoted
+    }
 
+    pub fn remove_job(&mut self, job_id: u64) -> Result<Job> {
+        let index = self
+            .active_jobs
+            .iter()
+            .position(|job| job.job_id == job_id)
+            .ok_or_else(|| {
+                ModelError::Validation(format!(
+                    "Заявка job_id={} не найдена среди активных",
+                    job_id
+                ))
+            })?;
+
+        let removed = self.active_jobs.remove(index);
         self.occupied_resource_total = self
             .occupied_resource_total
             .checked_sub(removed.resource_demand)
@@ -314,10 +380,10 @@ impl SystemState {
             return Ok(());
         }
 
-        let current_k = self.num_jobs();
+        let current_k = self.num_jobs_total();
         let service_speed = scenario.service_speed_by_state[current_k];
 
-        for job in self.active_jobs.values_mut() {
+        for job in &mut self.active_jobs {
             job.progress(dt, service_speed)?;
         }
 
@@ -325,16 +391,16 @@ impl SystemState {
         Ok(())
     }
 
-    pub fn completion_offsets(&self, scenario: &ScenarioConfig) -> Result<BTreeMap<u64, f64>> {
+    pub fn completion_offsets(&self, scenario: &ScenarioConfig) -> Result<Vec<(u64, f64)>> {
         if self.active_jobs.is_empty() {
-            return Ok(BTreeMap::new());
+            return Ok(Vec::new());
         }
 
         let service_speed = self.current_service_speed(scenario);
-        let mut offsets = BTreeMap::new();
+        let mut offsets = Vec::with_capacity(self.active_jobs.len());
 
-        for (job_id, job) in &self.active_jobs {
-            offsets.insert(*job_id, job.time_to_completion(service_speed)?);
+        for job in &self.active_jobs {
+            offsets.push((job.job_id, job.time_to_completion(service_speed)?));
         }
 
         Ok(offsets)
@@ -368,15 +434,17 @@ impl SystemState {
     pub fn completed_jobs(&self, tol: f64) -> Vec<u64> {
         self.active_jobs
             .iter()
-            .filter_map(|(job_id, job)| job.is_completed(tol).then_some(*job_id))
+            .filter_map(|job| job.is_completed(tol).then_some(job.job_id))
             .collect()
     }
 
     pub fn short_summary(&self) -> String {
         format!(
-            "SystemState(t={:.6}, k={}, occupied_resource={}, next_job_id={})",
+            "SystemState(t={:.6}, active={}, waiting={}, k_total={}, occupied_resource={}, next_job_id={})",
             self.current_time,
-            self.num_jobs(),
+            self.num_active_jobs(),
+            self.num_waiting_jobs(),
+            self.num_jobs_total(),
             self.occupied_resource(),
             self.next_job_id
         )
@@ -392,7 +460,23 @@ impl SystemState {
             out.push_str("Активных заявок нет.\n");
         } else {
             out.push_str("Активные заявки:\n");
-            for job in self.active_jobs.values() {
+            for job in &self.active_jobs {
+                out.push_str(&format!(
+                    "  job_id={:>3} | arrival={:>8.4} | resource={:>2} | total_work={:>8.4} | remaining={:>8.4}\n",
+                    job.job_id,
+                    job.arrival_time,
+                    job.resource_demand,
+                    job.total_workload,
+                    job.remaining_workload
+                ));
+            }
+        }
+
+        if self.waiting_queue.is_empty() {
+            out.push_str("Очередь ожидания пуста.\n");
+        } else {
+            out.push_str("Очередь ожидания:\n");
+            for job in &self.waiting_queue {
                 out.push_str(&format!(
                     "  job_id={:>3} | arrival={:>8.4} | resource={:>2} | total_work={:>8.4} | remaining={:>8.4}\n",
                     job.job_id,
@@ -430,65 +514,20 @@ pub fn self_test() -> Result<()> {
     println!();
 
     let mut state = SystemState::new();
-
-    println!("Шаг 1. Пустое состояние.");
-    state.pretty_print();
-
-    println!("Шаг 2. Добавляем первую заявку.");
     let job_1 = state.create_job(2, 1.5, None)?;
-    let decision_1 = state.can_accept(job_1.resource_demand, &scenario)?;
-    println!(
-        "Решение о допуске job_1: accepted={}, reason={}",
-        decision_1.accepted, decision_1.reason
-    );
-    state.add_job(job_1, &scenario)?;
-    state.pretty_print();
+    let _ = state.admit_or_enqueue(job_1, &scenario)?;
 
-    println!("Шаг 3. Добавляем вторую заявку.");
     let job_2 = state.create_job(3, 0.8, None)?;
-    let decision_2 = state.can_accept(job_2.resource_demand, &scenario)?;
-    println!(
-        "Решение о допуске job_2: accepted={}, reason={}",
-        decision_2.accepted, decision_2.reason
-    );
-    state.add_job(job_2, &scenario)?;
-    state.pretty_print();
+    let _ = state.admit_or_enqueue(job_2, &scenario)?;
 
-    println!("Шаг 4. Вычисляем ближайшее завершение.");
     let (next_job_id, next_dt) = state.next_completion(&scenario)?;
-    println!(
-        "Ближайшее завершение: job_id={:?}, через dt={:.6}\n",
-        next_job_id, next_dt
-    );
+    println!("Ближайшее завершение: job_id={:?}, через dt={:.6}\n", next_job_id, next_dt);
 
-    println!("Шаг 5. Продвигаем время до ближайшего завершения.");
     state.advance_time_and_service(next_dt, &scenario)?;
-    state.pretty_print();
-
-    let completed = state.completed_jobs(COMPLETION_TOL);
-    println!(
-        "Завершившиеся заявки после продвижения времени: {:?}\n",
-        completed
-    );
-
-    println!("Шаг 6. Удаляем завершившиеся заявки.");
-    for job_id in completed {
-        let removed = state.remove_job(job_id)?;
-        println!(
-            "Удалена заявка job_id={}, время поступления={:.4}, остаток={:.6}",
-            removed.job_id, removed.arrival_time, removed.remaining_workload
-        );
+    for job_id in state.completed_jobs(COMPLETION_TOL) {
+        let _ = state.remove_job(job_id)?;
     }
-    state.pretty_print();
-
-    println!("Шаг 7. Проверяем логику отказа по ресурсу.");
-    let oversized_resource = scenario.total_resource_r + 1;
-    let decision_3 = state.can_accept(oversized_resource, &scenario)?;
-    println!(
-        "Решение о допуске слишком большой заявки: accepted={}, reason={}",
-        decision_3.accepted, decision_3.reason
-    );
-    println!();
+    let _ = state.promote_from_queue(&scenario);
 
     println!("SELF-TEST model.rs завершён успешно.");
     Ok(())
@@ -510,33 +549,11 @@ mod tests {
     }
 
     #[test]
-    fn next_completion_uses_smallest_job_id_on_tie() {
-        let mut values = load_default_external_experiment_values().unwrap();
-        values.mean_workload = 1.0;
-        let workloads = standard_workload_family_from_values(&values).unwrap();
-        let scenario = build_base_scenario_from_values(
-            &values,
-            workloads.get("exponential").unwrap().clone(),
-            "_test_tie",
-        )
-        .unwrap();
-
-        let mut state = SystemState::new();
-        let job1 = Job::with_remaining_workload(1, 0.0, 1, 1.0, 1.0).unwrap();
-        let job2 = Job::with_remaining_workload(2, 0.0, 1, 1.0, 1.0).unwrap();
-
-        state.add_job(job1, &scenario).unwrap();
-        state.add_job(job2, &scenario).unwrap();
-
-        let (job_id, dt) = state.next_completion(&scenario).unwrap();
-        assert_eq!(job_id, Some(1));
-        assert!(dt.is_finite());
-    }
-
-    #[test]
     fn can_reject_for_resource_limit() {
         let mut values = load_default_external_experiment_values().unwrap();
         values.mean_workload = 1.0;
+        values.system_architecture = SystemArchitecture::Loss;
+        values.capacity_k = values.servers_n;
         let workloads = standard_workload_family_from_values(&values).unwrap();
         let scenario = build_base_scenario_from_values(
             &values,

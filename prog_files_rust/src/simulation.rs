@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::model::{AdmissionDecision, ModelError, RejectionReason, SystemState, COMPLETION_TOL};
+use crate::model::{AdmissionPlacement, ModelError, RejectionReason, SystemState, COMPLETION_TOL};
 use crate::params::{
     build_base_scenario_from_values, load_default_external_experiment_values, ParamsError,
     ResourceDistributionConfig, ScenarioConfig, SimulationConfig, WorkloadDistributionConfig,
@@ -61,6 +61,8 @@ fn ensure_positive_usize(name: &str, value: usize) -> Result<()> {
 pub struct StateSnapshot {
     pub time: f64,
     pub num_jobs: usize,
+    pub num_active_jobs: usize,
+    pub num_waiting_jobs: usize,
     pub occupied_resource: u32,
     pub arrival_rate: f64,
     pub service_speed: f64,
@@ -90,14 +92,19 @@ pub struct SimulationRunResult {
     pub pi_hat: Vec<f64>,
     pub mean_num_jobs: f64,
     pub mean_occupied_resource: f64,
+    pub mean_queue_length: f64,
+    pub mean_waiting_jobs: f64,
     pub arrival_attempts: u64,
     pub accepted_arrivals: u64,
+    pub accepted_to_queue: u64,
+    pub started_from_queue: u64,
     pub rejected_arrivals: u64,
     pub rejected_capacity: u64,
     pub rejected_server: u64,
     pub rejected_resource: u64,
     pub completed_jobs: u64,
     pub loss_probability: f64,
+    pub queueing_probability: f64,
     pub throughput: f64,
     pub state_trace: Vec<StateSnapshot>,
     pub event_log: Vec<EventRecord>,
@@ -121,11 +128,15 @@ impl SimulationRunResult {
             "mean_occupied_resource".to_string(),
             json!(self.mean_occupied_resource),
         );
+        summary.insert("mean_queue_length".to_string(), json!(self.mean_queue_length));
+        summary.insert("mean_waiting_jobs".to_string(), json!(self.mean_waiting_jobs));
         summary.insert("arrival_attempts".to_string(), json!(self.arrival_attempts));
         summary.insert(
             "accepted_arrivals".to_string(),
             json!(self.accepted_arrivals),
         );
+        summary.insert("accepted_to_queue".to_string(), json!(self.accepted_to_queue));
+        summary.insert("started_from_queue".to_string(), json!(self.started_from_queue));
         summary.insert(
             "rejected_arrivals".to_string(),
             json!(self.rejected_arrivals),
@@ -141,6 +152,10 @@ impl SimulationRunResult {
         );
         summary.insert("completed_jobs".to_string(), json!(self.completed_jobs));
         summary.insert("loss_probability".to_string(), json!(self.loss_probability));
+        summary.insert(
+            "queueing_probability".to_string(),
+            json!(self.queueing_probability),
+        );
         summary.insert("throughput".to_string(), json!(self.throughput));
 
         for (k, value) in self.pi_hat.iter().enumerate() {
@@ -265,8 +280,11 @@ pub struct StatisticsAccumulator {
     pub warmup_time: f64,
     pub state_times: Vec<f64>,
     pub resource_time_integral: f64,
+    pub queue_time_integral: f64,
     pub arrival_attempts: u64,
     pub accepted_arrivals: u64,
+    pub accepted_to_queue: u64,
+    pub started_from_queue: u64,
     pub rejected_arrivals: u64,
     pub rejected_capacity: u64,
     pub rejected_server: u64,
@@ -286,8 +304,11 @@ impl StatisticsAccumulator {
             warmup_time,
             state_times: vec![0.0; capacity_k + 1],
             resource_time_integral: 0.0,
+            queue_time_integral: 0.0,
             arrival_attempts: 0,
             accepted_arrivals: 0,
+            accepted_to_queue: 0,
+            started_from_queue: 0,
             rejected_arrivals: 0,
             rejected_capacity: 0,
             rejected_server: 0,
@@ -309,6 +330,7 @@ impl StatisticsAccumulator {
         t0: f64,
         t1: f64,
         num_jobs: usize,
+        waiting_jobs: usize,
         occupied_resource: u32,
     ) -> Result<()> {
         if t1 < t0 {
@@ -333,6 +355,7 @@ impl StatisticsAccumulator {
 
         self.state_times[num_jobs] += overlap;
         self.resource_time_integral += occupied_resource as f64 * overlap;
+        self.queue_time_integral += waiting_jobs as f64 * overlap;
         Ok(())
     }
 
@@ -342,9 +365,18 @@ impl StatisticsAccumulator {
         }
     }
 
-    pub fn register_admission(&mut self, event_time: f64) {
+    pub fn register_admission(&mut self, event_time: f64, queued: bool) {
         if self.is_in_observation_window(event_time) {
             self.accepted_arrivals += 1;
+            if queued {
+                self.accepted_to_queue += 1;
+            }
+        }
+    }
+
+    pub fn register_started_from_queue(&mut self, event_time: f64) {
+        if self.is_in_observation_window(event_time) {
+            self.started_from_queue += 1;
         }
     }
 
@@ -396,8 +428,15 @@ impl StatisticsAccumulator {
             .sum::<f64>();
 
         let mean_occupied_resource = self.resource_time_integral / observed_time;
+        let mean_queue_length = self.queue_time_integral / observed_time;
+        let mean_waiting_jobs = mean_queue_length;
         let loss_probability = if self.arrival_attempts > 0 {
             self.rejected_arrivals as f64 / self.arrival_attempts as f64
+        } else {
+            0.0
+        };
+        let queueing_probability = if self.accepted_arrivals > 0 {
+            self.accepted_to_queue as f64 / self.accepted_arrivals as f64
         } else {
             0.0
         };
@@ -414,14 +453,19 @@ impl StatisticsAccumulator {
             pi_hat,
             mean_num_jobs,
             mean_occupied_resource,
+            mean_queue_length,
+            mean_waiting_jobs,
             arrival_attempts: self.arrival_attempts,
             accepted_arrivals: self.accepted_arrivals,
+            accepted_to_queue: self.accepted_to_queue,
+            started_from_queue: self.started_from_queue,
             rejected_arrivals: self.rejected_arrivals,
             rejected_capacity: self.rejected_capacity,
             rejected_server: self.rejected_server,
             rejected_resource: self.rejected_resource,
             completed_jobs: self.completed_jobs,
             loss_probability,
+            queueing_probability,
             throughput,
             state_trace,
             event_log,
@@ -479,6 +523,8 @@ impl SingleRunSimulator {
         self.state_trace.push(StateSnapshot {
             time: self.state.current_time,
             num_jobs: self.state.num_jobs(),
+            num_active_jobs: self.state.num_active_jobs(),
+            num_waiting_jobs: self.state.num_waiting_jobs(),
             occupied_resource: self.state.occupied_resource(),
             arrival_rate: self.state.current_arrival_rate(&self.scenario),
             service_speed: self.state.current_service_speed(&self.scenario),
@@ -519,36 +565,15 @@ impl SingleRunSimulator {
     }
 
     fn process_arrival(&mut self) -> Result<()> {
-        let num_jobs_before = self.state.num_jobs();
+        let num_jobs_before = self.state.num_jobs_total();
         let occupied_resource_before = self.state.occupied_resource();
 
         let (resource_demand, workload) = self.sample_new_job_parameters()?;
         self.stats.register_arrival_attempt(self.state.current_time);
 
-        let decision: AdmissionDecision = self.state.can_accept(resource_demand, &self.scenario)?;
+        let decision = self.state.can_admit_job(resource_demand, &self.scenario)?;
 
-        if decision.accepted {
-            let job =
-                self.state
-                    .create_job(resource_demand, workload, Some(self.state.current_time))?;
-            let job_id = job.job_id;
-
-            self.state.add_job(job, &self.scenario)?;
-            self.stats.register_admission(self.state.current_time);
-
-            self.record_event(
-                "arrival_accepted",
-                Some(job_id),
-                num_jobs_before,
-                self.state.num_jobs(),
-                occupied_resource_before,
-                self.state.occupied_resource(),
-                format!(
-                    "resource_demand={}, workload={:.6}",
-                    resource_demand, workload
-                ),
-            );
-        } else {
+        if !decision.accepted {
             self.stats
                 .register_rejection(self.state.current_time, decision.reason);
 
@@ -556,7 +581,7 @@ impl SingleRunSimulator {
                 "arrival_rejected",
                 None,
                 num_jobs_before,
-                self.state.num_jobs(),
+                self.state.num_jobs_total(),
                 occupied_resource_before,
                 self.state.occupied_resource(),
                 format!(
@@ -566,7 +591,35 @@ impl SingleRunSimulator {
                     workload
                 ),
             );
+            self.record_state_snapshot();
+            return Ok(());
         }
+
+        let job =
+            self.state
+                .create_job(resource_demand, workload, Some(self.state.current_time))?;
+        let job_id = job.job_id;
+        let placement = self.state.admit_or_enqueue(job, &self.scenario)?;
+        let queued = matches!(placement, AdmissionPlacement::Queued);
+        self.stats.register_admission(self.state.current_time, queued);
+
+        let event_type = if queued {
+            "arrival_enqueued"
+        } else {
+            "arrival_accepted"
+        };
+        self.record_event(
+            event_type,
+            Some(job_id),
+            num_jobs_before,
+            self.state.num_jobs_total(),
+            occupied_resource_before,
+            self.state.occupied_resource(),
+            format!(
+                "resource_demand={}, workload={:.6}, queued={}",
+                resource_demand, workload, queued
+            ),
+        );
 
         self.record_state_snapshot();
         Ok(())
@@ -579,7 +632,7 @@ impl SingleRunSimulator {
         }
 
         for job_id in completed_ids {
-            let num_jobs_before = self.state.num_jobs();
+            let num_jobs_before = self.state.num_jobs_total();
             let occupied_resource_before = self.state.occupied_resource();
 
             let removed_job = self.state.remove_job(job_id)?;
@@ -589,7 +642,7 @@ impl SingleRunSimulator {
                 "departure",
                 Some(removed_job.job_id),
                 num_jobs_before,
-                self.state.num_jobs(),
+                self.state.num_jobs_total(),
                 occupied_resource_before,
                 self.state.occupied_resource(),
                 format!(
@@ -597,6 +650,22 @@ impl SingleRunSimulator {
                     removed_job.arrival_time, removed_job.total_workload
                 ),
             );
+
+            let promoted = self.state.promote_from_queue(&self.scenario);
+            if promoted > 0 {
+                for _ in 0..promoted {
+                    self.stats.register_started_from_queue(self.state.current_time);
+                }
+                self.record_event(
+                    "queue_promotion",
+                    None,
+                    self.state.num_jobs_total(),
+                    self.state.num_jobs_total(),
+                    self.state.occupied_resource(),
+                    self.state.occupied_resource(),
+                    format!("promoted_jobs={promoted}"),
+                );
+            }
         }
 
         self.record_state_snapshot();
@@ -620,7 +689,8 @@ impl SingleRunSimulator {
                 self.stats.observe_constant_interval(
                     t0,
                     t1,
-                    self.state.num_jobs(),
+                    self.state.num_jobs_total(),
+                    self.state.num_waiting_jobs(),
                     self.state.occupied_resource(),
                 )?;
                 self.state
@@ -646,7 +716,8 @@ impl SingleRunSimulator {
                 self.stats.observe_constant_interval(
                     t0,
                     t1,
-                    self.state.num_jobs(),
+                    self.state.num_jobs_total(),
+                    self.state.num_waiting_jobs(),
                     self.state.occupied_resource(),
                 )?;
                 self.state
@@ -659,7 +730,8 @@ impl SingleRunSimulator {
             self.stats.observe_constant_interval(
                 t0,
                 t1,
-                self.state.num_jobs(),
+                self.state.num_jobs_total(),
+                self.state.num_waiting_jobs(),
                 self.state.occupied_resource(),
             )?;
 
@@ -725,12 +797,28 @@ pub fn print_run_summary(result: &SimulationRunResult) {
         result.mean_occupied_resource
     );
     println!(
+        "Средняя длина очереди:             {:.6}",
+        result.mean_queue_length
+    );
+    println!(
+        "Среднее число ожидающих:           {:.6}",
+        result.mean_waiting_jobs
+    );
+    println!(
         "Число попыток поступления:         {}",
         result.arrival_attempts
     );
     println!(
         "Число принятых заявок:             {}",
         result.accepted_arrivals
+    );
+    println!(
+        "Из них поставлено в очередь:       {}",
+        result.accepted_to_queue
+    );
+    println!(
+        "Стартов обслуживания из очереди:   {}",
+        result.started_from_queue
     );
     println!(
         "Число отказов:                     {}",
@@ -755,6 +843,10 @@ pub fn print_run_summary(result: &SimulationRunResult) {
     println!(
         "Вероятность отказа:                {:.6}",
         result.loss_probability
+    );
+    println!(
+        "Вероятность попадания в очередь:   {:.6}",
+        result.queueing_probability
     );
     println!(
         "Эффективная пропускная способность:{:.6}",

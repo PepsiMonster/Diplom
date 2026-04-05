@@ -15,6 +15,19 @@ type Result<T> = std::result::Result<T, ParamsError>;
 pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str =
     "py/generated/experiment_values.json";
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemArchitecture {
+    Loss,
+    Buffer,
+}
+
+impl Default for SystemArchitecture {
+    fn default() -> Self {
+        Self::Loss
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalExperimentValues {
     pub suite_name: String,
@@ -23,6 +36,10 @@ pub struct ExternalExperimentValues {
     pub max_time: f64,
     pub warmup_time: f64,
     pub base_seed: u64,
+    #[serde(default)]
+    pub system_architecture: SystemArchitecture,
+    #[serde(default)]
+    pub queue_capacity: usize,
 
     pub capacity_k: usize,
     pub servers_n: usize,
@@ -453,6 +470,7 @@ impl WorkloadDistributionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioConfig {
     pub name: String,
+    pub system_architecture: SystemArchitecture,
     pub capacity_k: usize,
     pub servers_n: usize,
     pub total_resource_r: u32,
@@ -465,6 +483,10 @@ pub struct ScenarioConfig {
 }
 
 impl ScenarioConfig {
+    pub fn queue_capacity(&self) -> usize {
+        self.capacity_k.saturating_sub(self.servers_n)
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure_positive_usize("capacity_k", self.capacity_k)?;
         ensure_positive_usize("servers_n", self.servers_n)?;
@@ -493,11 +515,23 @@ impl ScenarioConfig {
         self.workload_distribution.validate()?;
         self.simulation.validate()?;
 
-        if self.capacity_k < self.servers_n {
-            return Err(ParamsError::Validation(format!(
-                "Обычно capacity_k должен быть >= servers_n. Сейчас capacity_k={}, servers_n={}",
-                self.capacity_k, self.servers_n
-            )));
+        match self.system_architecture {
+            SystemArchitecture::Loss => {
+                if self.capacity_k != self.servers_n {
+                    return Err(ParamsError::Validation(format!(
+                        "Для архитектуры loss требуется capacity_k == servers_n. Сейчас capacity_k={}, servers_n={}",
+                        self.capacity_k, self.servers_n
+                    )));
+                }
+            }
+            SystemArchitecture::Buffer => {
+                if self.capacity_k <= self.servers_n {
+                    return Err(ParamsError::Validation(format!(
+                        "Для архитектуры buffer требуется capacity_k > servers_n. Сейчас capacity_k={}, servers_n={}",
+                        self.capacity_k, self.servers_n
+                    )));
+                }
+            }
         }
 
         if self.resource_distribution.min_possible_units() > self.total_resource_r {
@@ -519,10 +553,12 @@ impl ScenarioConfig {
         };
 
         format!(
-            "Scenario(name='{}', K={}, N={}, R={}, resource='{}', work='{}', replications={}){}",
+            "Scenario(name='{}', arch={:?}, K={}, N={}, Q={}, R={}, resource='{}', work='{}', replications={}){}",
             self.name,
+            self.system_architecture,
             self.capacity_k,
             self.servers_n,
+            self.queue_capacity(),
             self.total_resource_r,
             self.resource_distribution.short_label(),
             self.workload_distribution.short_label(),
@@ -543,8 +579,16 @@ impl ScenarioConfig {
             self.capacity_k
         ));
         s.push_str(&format!(
+            "Архитектура:                          {:?}\n",
+            self.system_architecture
+        ));
+        s.push_str(&format!(
             "N (число приборов):                  {}\n",
             self.servers_n
+        ));
+        s.push_str(&format!(
+            "Q (ёмкость очереди):                  {}\n",
+            self.queue_capacity()
         ));
         s.push_str(&format!(
             "R (общий ресурс):                    {}\n",
@@ -806,6 +850,7 @@ pub fn build_base_scenario_from_values(
 ) -> Result<ScenarioConfig> {
     let scenario = ScenarioConfig {
         name: format!("base{name_suffix}"),
+        system_architecture: values.system_architecture,
         capacity_k: values.capacity_k,
         servers_n: values.servers_n,
         total_resource_r: values.total_resource_r,
