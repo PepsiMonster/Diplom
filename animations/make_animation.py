@@ -45,7 +45,7 @@ RESULTS_DIR = BASE_DIR / "results"
 # )
 
 TRACE_PATH = Path(
-    r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260406_135543\full_run_results\hyperexp_heavy\run_0007.json"
+    r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260406_154147\full_run_results\hyperexp_heavy\run_0002.json"
 )
 
 # TRACE_PATH = Path(
@@ -71,11 +71,11 @@ TRACE_PATH = Path(
 
 CFG: SceneConfig = DEFAULT_SCENE_CONFIG
 
-FPS = 24
-TARGET_VIDEO_SECONDS = 60.0
+FPS = 15
+# TARGET_VIDEO_SECONDS = 60.0
 
 # Сколько заявок максимум брать из trace для анимации
-MAX_JOBS = 60
+MAX_JOBS = 300
 
 # Минимум заявок, даже если ключевые события уже встретились
 MIN_JOBS = 20
@@ -621,8 +621,9 @@ def make_animation(trace_path: Path = TRACE_PATH) -> Path:
 
     jobs = choose_interesting_jobs(all_jobs)
     t_start, t_end = build_time_window(jobs)
+    video_duration = t_end - t_start
 
-    total_frames = max(2, int(round(FPS * TARGET_VIDEO_SECONDS)))
+    total_frames = max(2, int(round(FPS * video_duration)))
     output_mp4 = determine_output_path(trace_path)
     output_gif = output_mp4.with_suffix(".gif")
 
