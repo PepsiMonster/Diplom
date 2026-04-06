@@ -17,6 +17,11 @@ def export_values(output_path: str = None) -> Path:
         "max_time": v.MAX_TIME,
         "warmup_time": v.WARMUP_TIME,
         "base_seed": v.BASE_SEED,
+        "record_state_trace": v.RECORD_STATE_TRACE,
+        "save_event_log": v.SAVE_EVENT_LOG,
+        "keep_full_run_results": v.KEEP_FULL_RUN_RESULTS,
+        "animation_log_max_jobs": v.ANIMATION_LOG_MAX_JOBS,
+        "full_run_results_per_scenario": v.FULL_RUN_RESULTS_PER_SCENARIO,
 
         # Пока Rust может это не использовать, но логически это уже часть внешней конфигурации
         "system_architecture": v.SYSTEM_ARCHITECTURE,

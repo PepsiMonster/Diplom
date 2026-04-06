@@ -501,12 +501,43 @@ fn suite_to_json_ready(suite_result: &ExperimentSuiteResult) -> Value {
     })
 }
 
+fn save_full_run_results_if_present(
+    suite_result: &ExperimentSuiteResult,
+    output_path: &Path,
+    max_runs_per_scenario: usize,
+) -> Result<()> {
+    let base = output_path.join("full_run_results");
+    let mut any_saved = false;
+
+    for (scenario_key, result) in &suite_result.scenario_results {
+        if result.run_results.is_empty() {
+            continue;
+        }
+        any_saved = true;
+        let scenario_dir = base.join(scenario_key);
+        fs::create_dir_all(&scenario_dir)?;
+        for run in result.run_results.iter().take(max_runs_per_scenario) {
+            let file_name = format!("run_{:04}.json", run.replication_index);
+            let path = scenario_dir.join(file_name);
+            fs::write(path, serde_json::to_string_pretty(run)?)?;
+        }
+    }
+
+    if !any_saved && base.exists() {
+        fs::remove_dir_all(base)?;
+    }
+
+    Ok(())
+}
+
 pub fn save_experiment_suite(
     suite_result: &ExperimentSuiteResult,
     output_dir: impl AsRef<Path>,
 ) -> Result<PathBuf> {
     let output_path = output_dir.as_ref().to_path_buf();
     ensure_directory(&output_path)?;
+    let values = load_default_external_experiment_values()?;
+    let max_runs_per_scenario = values.full_run_results_per_scenario;
 
     let aggregated_rows = suite_result.aggregated_rows();
     let all_run_rows = suite_result.all_run_rows();
@@ -523,6 +554,7 @@ pub fn save_experiment_suite(
         output_path.join("suite_result.json"),
         serde_json::to_string_pretty(&json_payload)?,
     )?;
+    save_full_run_results_if_present(suite_result, &output_path, max_runs_per_scenario)?;
 
     Ok(output_path)
 }
@@ -539,32 +571,6 @@ pub fn build_default_experiment_suite_from_values(
     values: &ExternalExperimentValues,
 ) -> Result<BTreeMap<String, ScenarioConfig>> {
     Ok(build_sensitivity_scenarios_from_values(values)?)
-}
-
-pub fn self_test() -> Result<()> {
-    let base_scenarios = build_default_experiment_suite(1.0)?;
-
-    let mut demo_scenarios: BTreeMap<String, ScenarioConfig> = BTreeMap::new();
-    for (key, scenario) in base_scenarios {
-        let mut modified = scenario.clone();
-        modified.simulation.max_time = 20_000.0;
-        modified.simulation.warmup_time = 2_000.0;
-        modified.simulation.replications = 5;
-        modified.simulation.record_state_trace = false;
-        modified.simulation.save_event_log = false;
-        demo_scenarios.insert(key, modified);
-    }
-
-    let suite_result = run_experiment_suite(&demo_scenarios, "sensitivity_demo", 0.95, true)?;
-
-    print_experiment_suite_summary(&suite_result, None);
-
-    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let output_dir = PathBuf::from("results").join("experiments").join(timestamp);
-    let saved_path = save_experiment_suite(&suite_result, &output_dir)?;
-
-    println!("Результаты сохранены в: {}", saved_path.display());
-    Ok(())
 }
 
 #[cfg(test)]
