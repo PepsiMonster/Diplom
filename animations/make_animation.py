@@ -36,13 +36,17 @@ RESULTS_DIR = BASE_DIR / "results"
 #     r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260405_231623\full_run_results\deterministic\run_0000.json"
 # )
 
-TRACE_PATH = Path(
-    r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260405_231623\full_run_results\exponential\run_0000.json"
-)
+# TRACE_PATH = Path(
+#     r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260405_231623\full_run_results\exponential\run_0000.json"
+# )
 
 # TRACE_PATH = Path(
 #     r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260405_231623\full_run_results\erlang_2\run_0000.json"
 # )
+
+TRACE_PATH = Path(
+    r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260406_135543\full_run_results\hyperexp_heavy\run_0007.json"
+)
 
 # TRACE_PATH = Path(
 #     r"C:\Users\kotof\Study\Diploma\prog_files_rust\results\buffered\20260405_231623\full_run_results\erlang_4\run_0000.json"
