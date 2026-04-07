@@ -11,19 +11,19 @@ SYSTEM_ARCHITECTURE = "loss"
 # Выбор профиля скорости обслуживания
 # "state_dependent" - скорость обслуживания зависит от загруженности системы
 # "constant" - скорость обслуживания sigma_k - константа
-SERVICE_SPEED_PROFILE = "state_dependent"
+SERVICE_SPEED_PROFILE = "constant"
 
 # Выбор интенсивности поступления
 # "state_dependent" - интенсивность поступления новых заявок зависит от загрузки
 # "constant" - интенсивность поступления новых заявок константа
 # arrival_rate зависящий от состояни системы - очередь в супермаркете, 
 # когда люди решают даже в нее не вставать, lambda_k динамичная
-ARRIVAL_RATE_PROFILE = "state_dependent"
+ARRIVAL_RATE_PROFILE = "constant"
 
 # Выбор профиля workload_family
 # "basic" - короткий набор для быстрых сравнений
 # "full" - полный набор распределений
-WORKLOAD_FAMILY_PROFILE = "full"
+WORKLOAD_FAMILY_PROFILE = "basic"
 
 
 # Имя серии экспериментов. Используется как метка результатов и папок
@@ -73,7 +73,7 @@ CAPACITY_K = 96
 SERVERS_N = 96
 
 # Общий объём доступного ресурса.
-TOTAL_RESOURCE_R = 700
+TOTAL_RESOURCE_R = 590
 
 
 # Профиль интенсивности поступления lambda_k
