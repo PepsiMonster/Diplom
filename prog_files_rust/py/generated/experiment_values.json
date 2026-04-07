@@ -11,10 +11,13 @@
   "animation_log_max_jobs": 1000,
   "full_run_results_per_scenario": 3,
   "system_architecture": "loss",
+  "service_speed_profile": "state_dependent",
+  "arrival_rate_profile": "state_dependent",
+  "workload_family_profile": "full",
   "queue_capacity": 0,
   "capacity_k": 96,
   "servers_n": 96,
-  "total_resource_r": 800,
+  "total_resource_r": 700,
   "arrival_normal_value": 82.2,
   "arrival_threshold_offset": 18,
   "arrival_reduced_value": 72.2,
@@ -50,9 +53,6 @@
   "workload_hyperexp_heavy_p": 0.85,
   "workload_hyperexp_heavy_fast_multiplier": 6.0,
   "arrival_process_family": [
-    "poisson",
-    "erlang_2",
-    "erlang_4",
-    "hyperexp_2"
+    "poisson"
   ]
 }

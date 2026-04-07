@@ -14,7 +14,8 @@ use crate::experiments::{
 };
 use crate::params::{
     build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
-    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError, ScenarioConfig,
+    load_default_external_experiment_values, standard_workload_family_from_values, ExternalExperimentValues,
+    ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -264,8 +265,33 @@ fn collect_png_paths(output_dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
     Ok(pngs)
 }
 
-fn make_timestamped_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
-    ensure_dir(base_dir.as_ref().join(timestamp()))
+fn short_profile(value: &str) -> &str {
+    match value {
+        "state_dependent" => "sd",
+        "constant" => "const",
+        other => other,
+    }
+}
+
+fn architecture_slug(values: &ExternalExperimentValues) -> &'static str {
+    match values.system_architecture {
+        crate::params::SystemArchitecture::Loss => "loss",
+        crate::params::SystemArchitecture::Buffer => "buffer",
+    }
+}
+
+fn profile_slug(values: &ExternalExperimentValues) -> String {
+    format!(
+        "arch-{}__arrprof-{}__srvprof-{}__work-{}",
+        architecture_slug(values),
+        short_profile(&values.arrival_rate_profile),
+        short_profile(&values.service_speed_profile),
+        values.workload_family_profile
+    )
+}
+
+fn make_timestamped_dir_with_slug(base_dir: impl AsRef<Path>, slug: &str) -> Result<PathBuf> {
+    ensure_dir(base_dir.as_ref().join(format!("{}__{}", timestamp(), slug)))
 }
 
 fn make_single_run_root(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
@@ -815,7 +841,7 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         keep_full_run_results,
     )?;
 
-    let output_root = make_timestamped_dir(&args.output_root)?;
+    let output_root = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
     let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
     let txt_summary_path = save_text_report(
@@ -882,7 +908,7 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
         keep_full_run_results,
     )?;
 
-    let suite_dir = make_timestamped_dir(&args.output_root)?;
+    let suite_dir = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
     let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;

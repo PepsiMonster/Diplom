@@ -50,6 +50,9 @@ pub struct ExternalExperimentValues {
     pub system_architecture: SystemArchitecture,
     #[serde(default)]
     pub queue_capacity: usize,
+    pub service_speed_profile: String,
+    pub arrival_rate_profile: String,
+    pub workload_family_profile: String,
 
     pub capacity_k: usize,
     pub servers_n: usize,
@@ -828,17 +831,29 @@ pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> 
 }
 
 pub fn build_arrival_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
-    let threshold_k = values
-        .capacity_k
-        .saturating_sub(values.arrival_threshold_offset);
+    match values.arrival_rate_profile.as_str() {
+        "state_dependent" => {
+            let threshold_k = values
+                .capacity_k
+                .saturating_sub(values.arrival_threshold_offset);
 
-    threshold_profile(
-        values.capacity_k,
-        values.arrival_normal_value,
-        threshold_k,
-        values.arrival_reduced_value,
-        values.arrival_full_state_value,
-    )
+            threshold_profile(
+                values.capacity_k,
+                values.arrival_normal_value,
+                threshold_k,
+                values.arrival_reduced_value,
+                values.arrival_full_state_value,
+            )
+        }
+        "constant" => constant_profile(
+            values.capacity_k,
+            values.arrival_normal_value,
+            Some(values.arrival_normal_value),
+        ),
+        other => Err(ParamsError::Validation(format!(
+            "Неизвестный arrival_rate_profile: '{other}'. Ожидается 'state_dependent' или 'constant'"
+        ))),
+    }
 }
 
 pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
@@ -848,12 +863,22 @@ pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
 }
 
 pub fn build_service_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
-    linear_decreasing_profile(
-        values.capacity_k,
-        values.service_start_value,
-        values.service_step,
-        values.service_floor_value,
-    )
+    match values.service_speed_profile.as_str() {
+        "state_dependent" => linear_decreasing_profile(
+            values.capacity_k,
+            values.service_start_value,
+            values.service_step,
+            values.service_floor_value,
+        ),
+        "constant" => constant_profile(
+            values.capacity_k,
+            values.service_start_value,
+            Some(values.service_start_value),
+        ),
+        other => Err(ParamsError::Validation(format!(
+            "Неизвестный service_speed_profile: '{other}'. Ожидается 'state_dependent' или 'constant'"
+        ))),
+    }
 }
 
 pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
@@ -867,6 +892,10 @@ pub fn build_base_scenario_from_values(
     workload_distribution: WorkloadDistributionConfig,
     name_suffix: &str,
 ) -> Result<ScenarioConfig> {
+    let arch = match values.system_architecture {
+        SystemArchitecture::Loss => "loss",
+        SystemArchitecture::Buffer => "buffer",
+    };
     let scenario = ScenarioConfig {
         name: format!("base{name_suffix}"),
         system_architecture: values.system_architecture,
@@ -878,7 +907,13 @@ pub fn build_base_scenario_from_values(
         resource_distribution: build_resource_distribution_from_values(values)?,
         workload_distribution,
         simulation: build_simulation_config_from_values(values)?,
-        note: "Сценарий, собранный из внешнего Python-конфига.".to_string(),
+        note: format!(
+            "arch={}; arrival_rate_profile={}; service_speed_profile={}; workload_family_profile={}",
+            arch,
+            values.arrival_rate_profile,
+            values.service_speed_profile,
+            values.workload_family_profile
+        ),
     };
 
     scenario.validate()?;

@@ -21,7 +21,8 @@ SERVICE_SPEED_PROFILE = "state_dependent"
 ARRIVAL_RATE_PROFILE = "state_dependent"
 
 # Выбор профиля workload_family
-# "basic" содержит 
+# "basic" - короткий набор для быстрых сравнений
+# "full" - полный набор распределений
 WORKLOAD_FAMILY_PROFILE = "full"
 
 
@@ -128,21 +129,22 @@ MEAN_WORKLOAD = 1.0
 # Какие виды распределений объёма работы сравниваем
 # Позволяет исследовать чувствительность к распределению времени обслуживания
 # Не напрямую а через отношение workload к sigma_k: integral_{0}^{T} sigma_k(u) du >= W
-WORKLOAD_FAMILY = [
-    "deterministic", 
+WORKLOAD_FAMILY_BASIC = [
+    "deterministic",
+    "exponential",
+    "erlang_4",
+    "hyperexp_heavy",
+]
+
+WORKLOAD_FAMILY_FULL = [
+    "deterministic",
     "exponential",
     "erlang_2",
     "erlang_4",
     "erlang_8",
     "hyperexp_2",
     "hyperexp_heavy",
-] # Сейчас это фулл, надо переделать его в других файлах под это
-
-# basic=[
-# "deterministic", 
-# "exponential", 
-# "erlang_4", 
-# "hyperexp_heavy"]
+]
 
 # Параметр p для HyperExp(2)
 WORKLOAD_HYPEREXP_P = 0.75
@@ -164,7 +166,4 @@ WORKLOAD_HYPEREXP_HEAVY_FAST_MULTIPLIER = 6.0
 # Позволит исследовать чувствительность к "типу входящего потока"
 ARRIVAL_PROCESS_FAMILY = [
     "poisson",
-    "erlang_2",
-    "erlang_4",
-    "hyperexp_2",
 ]
