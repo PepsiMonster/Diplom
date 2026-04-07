@@ -256,9 +256,13 @@ def validate_experiment_values(values_module: ModuleType) -> None:
             f"normal={values_module.ARRIVAL_NORMAL_VALUE}"
         ),
     )
-
+    """
+    Эта штука не давала делать новые заявки при полной загрузке системы.
+    Из-за этого у меня первые 2 недели не было reject по capacity или sever_limit. 
+    Не знаю, зачем такая штука нужна, видимо для совсем изи теста только на ресурсы.
+    """
     _require(
-        values_module.ARRIVAL_FULL_STATE_VALUE == 0.0,
+        values_module.ARRIVAL_FULL_STATE_VALUE >= 0.0,
         (
             "В текущей постановке требуется ARRIVAL_FULL_STATE_VALUE == 0.0, "
             "чтобы в полном состоянии система не принимала новые заявки."

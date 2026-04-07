@@ -598,6 +598,10 @@ impl SingleRunSimulator {
     fn sample_new_job_parameters(&mut self) -> Result<(u32, f64)> {
         let resource_demand =
             sample_resource_demand(&mut self.rng, &self.scenario.resource_distribution)?;
+            """
+            Распределение W работы задается
+            Получается распределение T = W/sigma_k
+            """
         let workload = sample_workload(&mut self.rng, &self.scenario.workload_distribution)?;
         Ok((resource_demand, workload))
     }
