@@ -1,7 +1,7 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::collections::BTreeMap;
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -14,8 +14,8 @@ use crate::experiments::{
 };
 use crate::params::{
     build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
-    load_default_external_experiment_values, standard_workload_family_from_values, ExternalExperimentValues,
-    ParamsError, ScenarioConfig,
+    load_default_external_experiment_values, standard_workload_family_from_values,
+    ExternalExperimentValues, ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -417,12 +417,40 @@ fn render_single_run_text(result: &SimulationRunResult, scenario: &ScenarioConfi
         result.completed_jobs
     ));
     out.push_str(&format!(
+        "Сэмплов job-time в окне: {}\n",
+        result.completed_time_samples
+    ));
+    out.push_str(&format!(
         "Вероятность отказа: {:.6}\n",
         result.loss_probability
     ));
     out.push_str(&format!(
         "Эффективная пропускная способность: {:.6}\n",
         result.throughput
+    ));
+    out.push_str(&format!(
+        "Среднее время обслуживания: {:.6}\n",
+        result.mean_service_time
+    ));
+    out.push_str(&format!(
+        "Среднее время ожидания: {:.6}\n",
+        result.mean_waiting_time
+    ));
+    out.push_str(&format!(
+        "Среднее время пребывания: {:.6}\n",
+        result.mean_sojourn_time
+    ));
+    out.push_str(&format!(
+        "Std времени обслуживания: {:.6}\n",
+        result.std_service_time
+    ));
+    out.push_str(&format!(
+        "Std времени ожидания: {:.6}\n",
+        result.std_waiting_time
+    ));
+    out.push_str(&format!(
+        "Std времени пребывания: {:.6}\n",
+        result.std_sojourn_time
     ));
     out.push_str("Оценка стационарного распределения pi_hat(k):\n");
     for (k, value) in result.pi_hat.iter().enumerate() {
@@ -452,6 +480,9 @@ fn render_suite_summary_text(suite_result: &ExperimentSuiteResult) -> String {
             "mean_occupied_resource",
             "loss_probability",
             "throughput",
+            "mean_service_time",
+            "mean_waiting_time",
+            "mean_sojourn_time",
             "accepted_arrivals",
             "rejected_arrivals",
             "completed_jobs",
@@ -497,12 +528,40 @@ fn save_single_run_report(
         ("Отказы", format_metric(result.rejected_arrivals)),
         ("Завершённые заявки", format_metric(result.completed_jobs)),
         (
+            "Сэмплов job-time в окне",
+            format_metric(result.completed_time_samples),
+        ),
+        (
             "Вероятность отказа",
             format!("{:.6}", result.loss_probability),
         ),
         (
             "Пропускная способность",
             format!("{:.6}", result.throughput),
+        ),
+        (
+            "Среднее время обслуживания",
+            format!("{:.6}", result.mean_service_time),
+        ),
+        (
+            "Среднее время ожидания",
+            format!("{:.6}", result.mean_waiting_time),
+        ),
+        (
+            "Среднее время пребывания",
+            format!("{:.6}", result.mean_sojourn_time),
+        ),
+        (
+            "Std времени обслуживания",
+            format!("{:.6}", result.std_service_time),
+        ),
+        (
+            "Std времени ожидания",
+            format!("{:.6}", result.std_waiting_time),
+        ),
+        (
+            "Std времени пребывания",
+            format!("{:.6}", result.std_sojourn_time),
         ),
     ];
 

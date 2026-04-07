@@ -12,8 +12,7 @@ pub enum ParamsError {
 
 type Result<T> = std::result::Result<T, ParamsError>;
 
-pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str =
-    "py/generated/experiment_values.json";
+pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str = "py/generated/experiment_values.json";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -81,9 +80,7 @@ pub struct ExternalExperimentValues {
 
 pub fn load_external_experiment_values(path: impl AsRef<Path>) -> Result<ExternalExperimentValues> {
     let text = fs::read_to_string(path).map_err(|e| {
-        ParamsError::Validation(format!(
-            "Не удалось прочитать файл внешних параметров: {e}"
-        ))
+        ParamsError::Validation(format!("Не удалось прочитать файл внешних параметров: {e}"))
     })?;
 
     let values: ExternalExperimentValues = serde_json::from_str(&text).map_err(|e| {
@@ -740,10 +737,9 @@ pub fn standard_workload_family_from_values(
     let mut family = BTreeMap::new();
     for key in &values.workload_family {
         let workload_cfg = match key.as_str() {
-            "deterministic" => WorkloadDistributionConfig::deterministic(
-                values.mean_workload,
-                "Deterministic",
-            )?,
+            "deterministic" => {
+                WorkloadDistributionConfig::deterministic(values.mean_workload, "Deterministic")?
+            }
             "exponential" => {
                 WorkloadDistributionConfig::exponential(values.mean_workload, "Exponential")?
             }

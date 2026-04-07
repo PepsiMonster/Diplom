@@ -528,6 +528,8 @@ def generate_standard_plots(
         "mean_occupied_resource",
         "loss_probability",
         "throughput",
+        "mean_service_time",
+        "mean_sojourn_time",
     ]
 
     if extra_metrics is not None:
@@ -541,6 +543,8 @@ def generate_standard_plots(
         default_metrics.append("mean_queue_length")
     if "queueing_probability" in available and "queueing_probability" not in default_metrics:
         default_metrics.append("queueing_probability")
+    if "mean_waiting_time" in available and "mean_waiting_time" not in default_metrics:
+        default_metrics.append("mean_waiting_time")
 
     for metric in default_metrics:
         if metric in available:
@@ -568,7 +572,13 @@ def generate_standard_plots(
                     )
                 )
 
-            if metric in {"loss_probability", "mean_queue_length"}:
+            if metric in {
+                "loss_probability",
+                "mean_queue_length",
+                "mean_service_time",
+                "mean_waiting_time",
+                "mean_sojourn_time",
+            }:
                 try:
                     created.append(plot_metric_boxplot(suite_data, metric, out_dir, dpi=dpi))
                 except KeyError:
