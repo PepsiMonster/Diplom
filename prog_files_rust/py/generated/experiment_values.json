@@ -11,10 +11,13 @@
   "animation_log_max_jobs": 1000,
   "full_run_results_per_scenario": 3,
   "system_architecture": "loss",
+  "service_speed_profile": "constant",
+  "arrival_rate_profile": "constant",
+  "workload_family_profile": "basic",
   "queue_capacity": 0,
   "capacity_k": 96,
   "servers_n": 96,
-  "total_resource_r": 800,
+  "total_resource_r": 590,
   "arrival_normal_value": 82.2,
   "arrival_threshold_offset": 18,
   "arrival_reduced_value": 72.2,
@@ -39,10 +42,7 @@
   "workload_family": [
     "deterministic",
     "exponential",
-    "erlang_2",
     "erlang_4",
-    "erlang_8",
-    "hyperexp_2",
     "hyperexp_heavy"
   ],
   "workload_hyperexp_p": 0.75,
@@ -54,5 +54,7 @@
     "erlang_2",
     "erlang_4",
     "hyperexp_2"
-  ]
+  ],
+  "arrival_hyperexp_p": 0.75,
+  "arrival_hyperexp_fast_multiplier": 4.0
 }

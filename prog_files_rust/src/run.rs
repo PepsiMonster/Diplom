@@ -1,7 +1,7 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::collections::BTreeMap;
 
 use chrono::Local;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -13,8 +13,11 @@ use crate::experiments::{
     ExperimentSuiteResult, ExperimentsError,
 };
 use crate::params::{
-    build_base_scenario_from_values, build_sensitivity_scenarios_from_values,
-    load_default_external_experiment_values, standard_workload_family_from_values, ParamsError, ScenarioConfig,
+    build_arrival_sensitivity_scenarios_from_values, build_base_scenario_from_values,
+    build_combined_sensitivity_scenarios_from_values,
+    build_workload_sensitivity_scenarios_from_values, load_default_external_experiment_values,
+    standard_workload_family_from_values, ArrivalProcessConfig, ExternalExperimentValues,
+    ParamsError, ScenarioConfig,
 };
 use crate::simulation::{simulate_one_run, SimulationError, SimulationRunResult};
 
@@ -50,8 +53,10 @@ struct PlotSuiteData {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ScenarioFamily {
-    Default,
-    Sensitivity,
+    Base,
+    WorkloadSensitivity,
+    ArrivalSensitivity,
+    CombinedSensitivity,
 }
 
 #[derive(Debug, Parser)]
@@ -101,7 +106,7 @@ pub struct SingleArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct SuiteArgs {
-    #[arg(long, value_enum, default_value_t = ScenarioFamily::Default)]
+    #[arg(long, value_enum, default_value_t = ScenarioFamily::Base)]
     pub scenario_family: ScenarioFamily,
 
     #[arg(long, default_value = "experiment_suite")]
@@ -155,7 +160,7 @@ pub struct PlotsArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct FullArgs {
-    #[arg(long, value_enum, default_value_t = ScenarioFamily::Default)]
+    #[arg(long, value_enum, default_value_t = ScenarioFamily::Base)]
     pub scenario_family: ScenarioFamily,
 
     #[arg(long, default_value = "full_pipeline")]
@@ -264,8 +269,33 @@ fn collect_png_paths(output_dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
     Ok(pngs)
 }
 
-fn make_timestamped_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
-    ensure_dir(base_dir.as_ref().join(timestamp()))
+fn short_profile(value: &str) -> &str {
+    match value {
+        "state_dependent" => "sd",
+        "constant" => "const",
+        other => other,
+    }
+}
+
+fn architecture_slug(values: &ExternalExperimentValues) -> &'static str {
+    match values.system_architecture {
+        crate::params::SystemArchitecture::Loss => "loss",
+        crate::params::SystemArchitecture::Buffer => "buffer",
+    }
+}
+
+fn profile_slug(values: &ExternalExperimentValues) -> String {
+    format!(
+        "arch-{}__arrprof-{}__srvprof-{}__work-{}",
+        architecture_slug(values),
+        short_profile(&values.arrival_rate_profile),
+        short_profile(&values.service_speed_profile),
+        values.workload_family_profile
+    )
+}
+
+fn make_timestamped_dir_with_slug(base_dir: impl AsRef<Path>, slug: &str) -> Result<PathBuf> {
+    ensure_dir(base_dir.as_ref().join(format!("{}__{}", timestamp(), slug)))
 }
 
 fn make_single_run_root(base_dir: impl AsRef<Path>) -> Result<PathBuf> {
@@ -391,12 +421,40 @@ fn render_single_run_text(result: &SimulationRunResult, scenario: &ScenarioConfi
         result.completed_jobs
     ));
     out.push_str(&format!(
+        "Сэмплов job-time в окне: {}\n",
+        result.completed_time_samples
+    ));
+    out.push_str(&format!(
         "Вероятность отказа: {:.6}\n",
         result.loss_probability
     ));
     out.push_str(&format!(
         "Эффективная пропускная способность: {:.6}\n",
         result.throughput
+    ));
+    out.push_str(&format!(
+        "Среднее время обслуживания: {:.6}\n",
+        result.mean_service_time
+    ));
+    out.push_str(&format!(
+        "Среднее время ожидания: {:.6}\n",
+        result.mean_waiting_time
+    ));
+    out.push_str(&format!(
+        "Среднее время пребывания: {:.6}\n",
+        result.mean_sojourn_time
+    ));
+    out.push_str(&format!(
+        "Std времени обслуживания: {:.6}\n",
+        result.std_service_time
+    ));
+    out.push_str(&format!(
+        "Std времени ожидания: {:.6}\n",
+        result.std_waiting_time
+    ));
+    out.push_str(&format!(
+        "Std времени пребывания: {:.6}\n",
+        result.std_sojourn_time
     ));
     out.push_str("Оценка стационарного распределения pi_hat(k):\n");
     for (k, value) in result.pi_hat.iter().enumerate() {
@@ -426,6 +484,9 @@ fn render_suite_summary_text(suite_result: &ExperimentSuiteResult) -> String {
             "mean_occupied_resource",
             "loss_probability",
             "throughput",
+            "mean_service_time",
+            "mean_waiting_time",
+            "mean_sojourn_time",
             "accepted_arrivals",
             "rejected_arrivals",
             "completed_jobs",
@@ -471,12 +532,40 @@ fn save_single_run_report(
         ("Отказы", format_metric(result.rejected_arrivals)),
         ("Завершённые заявки", format_metric(result.completed_jobs)),
         (
+            "Сэмплов job-time в окне",
+            format_metric(result.completed_time_samples),
+        ),
+        (
             "Вероятность отказа",
             format!("{:.6}", result.loss_probability),
         ),
         (
             "Пропускная способность",
             format!("{:.6}", result.throughput),
+        ),
+        (
+            "Среднее время обслуживания",
+            format!("{:.6}", result.mean_service_time),
+        ),
+        (
+            "Среднее время ожидания",
+            format!("{:.6}", result.mean_waiting_time),
+        ),
+        (
+            "Среднее время пребывания",
+            format!("{:.6}", result.mean_sojourn_time),
+        ),
+        (
+            "Std времени обслуживания",
+            format!("{:.6}", result.std_service_time),
+        ),
+        (
+            "Std времени ожидания",
+            format!("{:.6}", result.std_waiting_time),
+        ),
+        (
+            "Std времени пребывания",
+            format!("{:.6}", result.std_sojourn_time),
         ),
     ];
 
@@ -707,7 +796,8 @@ fn build_single_scenario(args: &SingleArgs) -> Result<ScenarioConfig> {
         .cloned()
         .ok_or_else(|| RunError::Validation("Не найден workload 'exponential'".to_string()))?;
 
-    let base = build_base_scenario_from_values(&values, workload, "")?;
+    let base =
+        build_base_scenario_from_values(&values, workload, ArrivalProcessConfig::Poisson, "")?;
     let scenario = override_simulation_config(
         &base,
         args.max_time,
@@ -727,8 +817,16 @@ fn build_suite_scenarios(
     values.mean_workload = args.mean_workload;
 
     let scenarios = match args.scenario_family {
-        ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
+        ScenarioFamily::Base => build_default_experiment_suite(args.mean_workload)?,
+        ScenarioFamily::WorkloadSensitivity => {
+            build_workload_sensitivity_scenarios_from_values(&values)?
+        }
+        ScenarioFamily::ArrivalSensitivity => {
+            build_arrival_sensitivity_scenarios_from_values(&values)?
+        }
+        ScenarioFamily::CombinedSensitivity => {
+            build_combined_sensitivity_scenarios_from_values(&values)?
+        }
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -755,8 +853,16 @@ fn build_full_scenarios(
     values.mean_workload = args.mean_workload;
 
     let scenarios = match args.scenario_family {
-        ScenarioFamily::Default => build_default_experiment_suite(args.mean_workload)?,
-        ScenarioFamily::Sensitivity => build_sensitivity_scenarios_from_values(&values)?,
+        ScenarioFamily::Base => build_default_experiment_suite(args.mean_workload)?,
+        ScenarioFamily::WorkloadSensitivity => {
+            build_workload_sensitivity_scenarios_from_values(&values)?
+        }
+        ScenarioFamily::ArrivalSensitivity => {
+            build_arrival_sensitivity_scenarios_from_values(&values)?
+        }
+        ScenarioFamily::CombinedSensitivity => {
+            build_combined_sensitivity_scenarios_from_values(&values)?
+        }
     };
 
     let mut updated = std::collections::BTreeMap::new();
@@ -815,7 +921,7 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         keep_full_run_results,
     )?;
 
-    let output_root = make_timestamped_dir(&args.output_root)?;
+    let output_root = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
     let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
     let txt_summary_path = save_text_report(
@@ -882,7 +988,7 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
         keep_full_run_results,
     )?;
 
-    let suite_dir = make_timestamped_dir(&args.output_root)?;
+    let suite_dir = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
     let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;
@@ -946,7 +1052,9 @@ mod tests {
         values.mean_workload = 1.0;
         let workloads = standard_workload_family_from_values(&values).unwrap();
         let workload = workloads.get("exponential").unwrap().clone();
-        let base = build_base_scenario_from_values(&values, workload, "").unwrap();
+        let base =
+            build_base_scenario_from_values(&values, workload, ArrivalProcessConfig::Poisson, "")
+                .unwrap();
 
         let updated =
             override_simulation_config(&base, Some(123.0), Some(12.0), Some(7), true, true);

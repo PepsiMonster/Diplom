@@ -7,8 +7,13 @@ import values_validation as vv
 BASE_DIR = Path(__file__).resolve().parent
 
 
+def resolve_workload_family(values_module) -> list[str]:
+    return vv.resolve_workload_family(values_module)
+
+
 def export_values(output_path: str = None) -> Path:
     vv.validate_experiment_values(v)
+    resolved_workload_family = resolve_workload_family(v)
 
     payload = {
         "suite_name": v.SUITE_NAME,
@@ -25,6 +30,9 @@ def export_values(output_path: str = None) -> Path:
 
         # Пока Rust может это не использовать, но логически это уже часть внешней конфигурации
         "system_architecture": v.SYSTEM_ARCHITECTURE,
+        "service_speed_profile": v.SERVICE_SPEED_PROFILE,
+        "arrival_rate_profile": v.ARRIVAL_RATE_PROFILE,
+        "workload_family_profile": v.WORKLOAD_FAMILY_PROFILE,
         "queue_capacity": vv.compute_queue_capacity(v),
 
         "capacity_k": v.CAPACITY_K,
@@ -43,13 +51,15 @@ def export_values(output_path: str = None) -> Path:
         "resource_values": v.RESOURCE_VALUES,
         "resource_probabilities": v.RESOURCE_PROBABILITIES,
 
-        "workload_family": v.WORKLOAD_FAMILY,
+        "workload_family": resolved_workload_family,
         "workload_hyperexp_p": v.WORKLOAD_HYPEREXP_P,
         "workload_hyperexp_fast_multiplier": v.WORKLOAD_HYPEREXP_FAST_MULTIPLIER,
         "workload_hyperexp_heavy_p": v.WORKLOAD_HYPEREXP_HEAVY_P,
         "workload_hyperexp_heavy_fast_multiplier": v.WORKLOAD_HYPEREXP_HEAVY_FAST_MULTIPLIER,
 
         "arrival_process_family": v.ARRIVAL_PROCESS_FAMILY,
+        "arrival_hyperexp_p": v.ARRIVAL_HYPEREXP_P,
+        "arrival_hyperexp_fast_multiplier": v.ARRIVAL_HYPEREXP_FAST_MULTIPLIER,
     }
 
     if output_path is None:
