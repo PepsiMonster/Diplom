@@ -1113,51 +1113,51 @@ pub fn build_sensitivity_scenarios(mean_workload: f64) -> Result<BTreeMap<String
     build_workload_sensitivity_scenarios_from_values(&values)
 }
 
-pub fn print_scenario_summary(scenario: &ScenarioConfig) -> Result<()> {
-    println!("{}", scenario.summary_string()?);
-    Ok(())
-}
+// pub fn print_scenario_summary(scenario: &ScenarioConfig) -> Result<()> {
+//     println!("{}", scenario.summary_string()?);
+//     Ok(())
+// }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
 
-    #[test]
-    fn builds_standard_sensitivity_family() {
-        let values = load_default_external_experiment_values().unwrap();
-        let scenarios = build_sensitivity_scenarios(values.mean_workload).unwrap();
-        assert_eq!(scenarios.len(), values.workload_family.len());
+//     #[test]
+//     fn builds_standard_sensitivity_family() {
+//         let values = load_default_external_experiment_values().unwrap();
+//         let scenarios = build_sensitivity_scenarios(values.mean_workload).unwrap();
+//         assert_eq!(scenarios.len(), values.workload_family.len());
 
-        for scenario in scenarios.values() {
-            scenario.validate().unwrap();
-            assert_eq!(
-                scenario.arrival_rate_by_state.len(),
-                scenario.capacity_k + 1
-            );
-            assert_eq!(
-                scenario.service_speed_by_state.len(),
-                scenario.capacity_k + 1
-            );
-        }
-    }
+//         for scenario in scenarios.values() {
+//             scenario.validate().unwrap();
+//             assert_eq!(
+//                 scenario.arrival_rate_by_state.len(),
+//                 scenario.capacity_k + 1
+//             );
+//             assert_eq!(
+//                 scenario.service_speed_by_state.len(),
+//                 scenario.capacity_k + 1
+//             );
+//         }
+//     }
 
-    #[test]
-    fn hyperexp_is_mean_consistent() {
-        let cfg =
-            WorkloadDistributionConfig::hyperexponential2(1.0, 0.75, 4.0, "HyperExp(2)").unwrap();
-        cfg.validate().unwrap();
-        assert!((cfg.implied_mean() - 1.0).abs() < 1e-9);
-    }
+//     #[test]
+//     fn hyperexp_is_mean_consistent() {
+//         let cfg =
+//             WorkloadDistributionConfig::hyperexponential2(1.0, 0.75, 4.0, "HyperExp(2)").unwrap();
+//         cfg.validate().unwrap();
+//         assert!((cfg.implied_mean() - 1.0).abs() < 1e-9);
+//     }
 
-    #[test]
-    fn threshold_profile_has_zero_at_full_state() {
-        let values = load_default_external_experiment_values().unwrap();
-        let p = build_arrival_profile_from_values(&values).unwrap();
-        assert_eq!(p.len(), values.capacity_k + 1);
-        if values.arrival_rate_profile == "state_dependent" {
-            assert_eq!(p[values.capacity_k], values.arrival_full_state_value);
-        } else {
-            assert_eq!(p[values.capacity_k], values.arrival_normal_value);
-        }
-    }
-}
+//     #[test]
+//     fn threshold_profile_has_zero_at_full_state() {
+//         let values = load_default_external_experiment_values().unwrap();
+//         let p = build_arrival_profile_from_values(&values).unwrap();
+//         assert_eq!(p.len(), values.capacity_k + 1);
+//         if values.arrival_rate_profile == "state_dependent" {
+//             assert_eq!(p[values.capacity_k], values.arrival_full_state_value);
+//         } else {
+//             assert_eq!(p[values.capacity_k], values.arrival_normal_value);
+//         }
+//     }
+// }

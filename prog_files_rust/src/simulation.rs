@@ -1098,126 +1098,126 @@ pub fn simulate_one_run(
     SingleRunSimulator::new(scenario, replication_index, seed)?.run()
 }
 
-pub fn print_run_summary(result: &SimulationRunResult) {
-    println!("{}", "=".repeat(90));
-    println!("РЕЗУЛЬТАТ ОДНОГО ПРОГОНА");
-    println!("{}", "=".repeat(90));
-    println!(
-        "Сценарий:                          {}",
-        result.scenario_name
-    );
-    println!(
-        "Replication index:                 {}",
-        result.replication_index
-    );
-    println!("Seed:                              {}", result.seed);
-    println!("Полное время моделирования:        {}", result.total_time);
-    println!("Warm-up:                           {}", result.warmup_time);
-    println!(
-        "Наблюдаемое время:                 {}",
-        result.observed_time
-    );
-    println!("{}", "-".repeat(90));
-    println!(
-        "Среднее число заявок:              {:.6}",
-        result.mean_num_jobs
-    );
-    println!(
-        "Средний занятый ресурс:            {:.6}",
-        result.mean_occupied_resource
-    );
-    println!(
-        "Средняя длина очереди:             {:.6}",
-        result.mean_queue_length
-    );
-    println!(
-        "Среднее число ожидающих:           {:.6}",
-        result.mean_waiting_jobs
-    );
-    println!(
-        "Число попыток поступления:         {}",
-        result.arrival_attempts
-    );
-    println!(
-        "Число принятых заявок:             {}",
-        result.accepted_arrivals
-    );
-    println!(
-        "Из них поставлено в очередь:       {}",
-        result.accepted_to_queue
-    );
-    println!(
-        "Стартов обслуживания из очереди:   {}",
-        result.started_from_queue
-    );
-    println!(
-        "Число отказов:                     {}",
-        result.rejected_arrivals
-    );
-    println!(
-        "  из-за ёмкости K:                 {}",
-        result.rejected_capacity
-    );
-    println!(
-        "  из-за лимита приборов N:         {}",
-        result.rejected_server
-    );
-    println!(
-        "  из-за лимита ресурса R:          {}",
-        result.rejected_resource
-    );
-    println!(
-        "Число завершённых заявок:          {}",
-        result.completed_jobs
-    );
-    println!(
-        "Сэмплов job-time в окне:            {}",
-        result.completed_time_samples
-    );
-    println!(
-        "Вероятность отказа:                {:.6}",
-        result.loss_probability
-    );
-    println!(
-        "Вероятность попадания в очередь:   {:.6}",
-        result.queueing_probability
-    );
-    println!(
-        "Эффективная пропускная способность:{:.6}",
-        result.throughput
-    );
-    println!(
-        "Среднее время обслуживания:         {:.6}",
-        result.mean_service_time
-    );
-    println!(
-        "Среднее время ожидания:             {:.6}",
-        result.mean_waiting_time
-    );
-    println!(
-        "Среднее время пребывания:           {:.6}",
-        result.mean_sojourn_time
-    );
-    println!(
-        "Std времени обслуживания:           {:.6}",
-        result.std_service_time
-    );
-    println!(
-        "Std времени ожидания:               {:.6}",
-        result.std_waiting_time
-    );
-    println!(
-        "Std времени пребывания:             {:.6}",
-        result.std_sojourn_time
-    );
-    println!("{}", "-".repeat(90));
-    println!("Оценка стационарного распределения pi_hat(k):");
-    for (k, value) in result.pi_hat.iter().enumerate() {
-        println!("  k={:>2}: {:.6}", k, value);
-    }
-    println!("{}", "=".repeat(90));
-    println!();
-}
+// pub fn print_run_summary(result: &SimulationRunResult) {
+//     println!("{}", "=".repeat(90));
+//     println!("РЕЗУЛЬТАТ ОДНОГО ПРОГОНА");
+//     println!("{}", "=".repeat(90));
+//     println!(
+//         "Сценарий:                          {}",
+//         result.scenario_name
+//     );
+//     println!(
+//         "Replication index:                 {}",
+//         result.replication_index
+//     );
+//     println!("Seed:                              {}", result.seed);
+//     println!("Полное время моделирования:        {}", result.total_time);
+//     println!("Warm-up:                           {}", result.warmup_time);
+//     println!(
+//         "Наблюдаемое время:                 {}",
+//         result.observed_time
+//     );
+//     println!("{}", "-".repeat(90));
+//     println!(
+//         "Среднее число заявок:              {:.6}",
+//         result.mean_num_jobs
+//     );
+//     println!(
+//         "Средний занятый ресурс:            {:.6}",
+//         result.mean_occupied_resource
+//     );
+//     println!(
+//         "Средняя длина очереди:             {:.6}",
+//         result.mean_queue_length
+//     );
+//     println!(
+//         "Среднее число ожидающих:           {:.6}",
+//         result.mean_waiting_jobs
+//     );
+//     println!(
+//         "Число попыток поступления:         {}",
+//         result.arrival_attempts
+//     );
+//     println!(
+//         "Число принятых заявок:             {}",
+//         result.accepted_arrivals
+//     );
+//     println!(
+//         "Из них поставлено в очередь:       {}",
+//         result.accepted_to_queue
+//     );
+//     println!(
+//         "Стартов обслуживания из очереди:   {}",
+//         result.started_from_queue
+//     );
+//     println!(
+//         "Число отказов:                     {}",
+//         result.rejected_arrivals
+//     );
+//     println!(
+//         "  из-за ёмкости K:                 {}",
+//         result.rejected_capacity
+//     );
+//     println!(
+//         "  из-за лимита приборов N:         {}",
+//         result.rejected_server
+//     );
+//     println!(
+//         "  из-за лимита ресурса R:          {}",
+//         result.rejected_resource
+//     );
+//     println!(
+//         "Число завершённых заявок:          {}",
+//         result.completed_jobs
+//     );
+//     println!(
+//         "Сэмплов job-time в окне:            {}",
+//         result.completed_time_samples
+//     );
+//     println!(
+//         "Вероятность отказа:                {:.6}",
+//         result.loss_probability
+//     );
+//     println!(
+//         "Вероятность попадания в очередь:   {:.6}",
+//         result.queueing_probability
+//     );
+//     println!(
+//         "Эффективная пропускная способность:{:.6}",
+//         result.throughput
+//     );
+//     println!(
+//         "Среднее время обслуживания:         {:.6}",
+//         result.mean_service_time
+//     );
+//     println!(
+//         "Среднее время ожидания:             {:.6}",
+//         result.mean_waiting_time
+//     );
+//     println!(
+//         "Среднее время пребывания:           {:.6}",
+//         result.mean_sojourn_time
+//     );
+//     println!(
+//         "Std времени обслуживания:           {:.6}",
+//         result.std_service_time
+//     );
+//     println!(
+//         "Std времени ожидания:               {:.6}",
+//         result.std_waiting_time
+//     );
+//     println!(
+//         "Std времени пребывания:             {:.6}",
+//         result.std_sojourn_time
+//     );
+//     println!("{}", "-".repeat(90));
+//     println!("Оценка стационарного распределения pi_hat(k):");
+//     for (k, value) in result.pi_hat.iter().enumerate() {
+//         println!("  k={:>2}: {:.6}", k, value);
+//     }
+//     println!("{}", "=".repeat(90));
+//     println!();
+// }
 
 #[cfg(test)]
 mod tests {
