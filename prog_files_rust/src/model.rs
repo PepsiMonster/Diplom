@@ -160,12 +160,18 @@ impl Job {
         ensure_nonnegative_f64("dt", dt)?;
         ensure_nonnegative_f64("service_speed", service_speed)?;
 
+        self.progress_unchecked(dt, service_speed);
+        Ok(())
+    }
+
+    pub fn progress_unchecked(&mut self, dt: f64, service_speed: f64) {
+        debug_assert!(dt >= 0.0);
+        debug_assert!(service_speed >= 0.0);
         if dt == 0.0 || service_speed == 0.0 {
-            return Ok(());
+            return;
         }
 
         self.remaining_workload = (self.remaining_workload - service_speed * dt).max(0.0);
-        Ok(())
     }
 
     pub fn is_completed(&self, tol: f64) -> bool {
@@ -174,15 +180,19 @@ impl Job {
 
     pub fn time_to_completion(&self, service_speed: f64) -> Result<f64> {
         ensure_nonnegative_f64("service_speed", service_speed)?;
+        Ok(self.time_to_completion_unchecked(service_speed))
+    }
 
+    pub fn time_to_completion_unchecked(&self, service_speed: f64) -> f64 {
+        debug_assert!(service_speed >= 0.0);
         if self.is_completed(COMPLETION_TOL) {
-            return Ok(0.0);
+            return 0.0;
         }
         if service_speed == 0.0 {
-            return Ok(f64::INFINITY);
+            return f64::INFINITY;
         }
 
-        Ok(self.remaining_workload / service_speed)
+        self.remaining_workload / service_speed
     }
 }
 
@@ -254,21 +264,29 @@ impl SystemState {
         scenario: &ScenarioConfig,
     ) -> Result<AdmissionDecision> {
         ensure_positive_u32("resource_demand", resource_demand)?;
+        Ok(self.can_admit_job_fast(resource_demand, scenario))
+    }
 
+    pub fn can_admit_job_fast(
+        &self,
+        resource_demand: u32,
+        scenario: &ScenarioConfig,
+    ) -> AdmissionDecision {
+        debug_assert!(resource_demand > 0);
         if self.num_jobs_total() >= scenario.capacity_k {
-            return Ok(AdmissionDecision::rejected(RejectionReason::CapacityLimit));
+            return AdmissionDecision::rejected(RejectionReason::CapacityLimit);
         }
         if self.occupied_resource() + resource_demand > scenario.total_resource_r {
-            return Ok(AdmissionDecision::rejected(RejectionReason::ResourceLimit));
+            return AdmissionDecision::rejected(RejectionReason::ResourceLimit);
         }
 
         if scenario.system_architecture == SystemArchitecture::Loss
             && self.num_active_jobs() >= scenario.servers_n
         {
-            return Ok(AdmissionDecision::rejected(RejectionReason::ServerLimit));
+            return AdmissionDecision::rejected(RejectionReason::ServerLimit);
         }
 
-        Ok(AdmissionDecision::accepted())
+        AdmissionDecision::accepted()
     }
 
     pub fn can_accept(
@@ -276,7 +294,7 @@ impl SystemState {
         resource_demand: u32,
         scenario: &ScenarioConfig,
     ) -> Result<AdmissionDecision> {
-        self.can_admit_job(resource_demand, scenario)
+        Ok(self.can_admit_job_fast(resource_demand, scenario))
     }
 
     pub fn create_job(
@@ -385,19 +403,24 @@ impl SystemState {
 
     pub fn advance_time_and_service(&mut self, dt: f64, scenario: &ScenarioConfig) -> Result<()> {
         ensure_nonnegative_f64("dt", dt)?;
+        self.advance_time_and_service_fast(dt, scenario);
+        Ok(())
+    }
+
+    pub fn advance_time_and_service_fast(&mut self, dt: f64, scenario: &ScenarioConfig) {
+        debug_assert!(dt >= 0.0);
         if dt == 0.0 {
-            return Ok(());
+            return;
         }
 
         let current_k = self.num_jobs_total();
         let service_speed = scenario.service_speed_by_state[current_k];
 
         for job in &mut self.active_jobs {
-            job.progress(dt, service_speed)?;
+            job.progress_unchecked(dt, service_speed);
         }
 
         self.current_time += dt;
-        Ok(())
     }
 
     pub fn completion_offsets(&self, scenario: &ScenarioConfig) -> Result<Vec<(u64, f64)>> {
@@ -416,15 +439,17 @@ impl SystemState {
     }
 
     pub fn next_completion(&self, scenario: &ScenarioConfig) -> Result<(Option<u64>, f64)> {
-        let offsets = self.completion_offsets(scenario)?;
-        if offsets.is_empty() {
-            return Ok((None, f64::INFINITY));
-        }
+        Ok(self.next_completion_fast(scenario))
+    }
 
+    pub fn next_completion_fast(&self, scenario: &ScenarioConfig) -> (Option<u64>, f64) {
         let mut best_job_id: Option<u64> = None;
         let mut best_dt = f64::INFINITY;
+        let service_speed = self.current_service_speed(scenario);
 
-        for (job_id, dt) in offsets {
+        for job in &self.active_jobs {
+            let job_id = job.job_id;
+            let dt = job.time_to_completion_unchecked(service_speed);
             if dt < best_dt {
                 best_dt = dt;
                 best_job_id = Some(job_id);
@@ -437,7 +462,7 @@ impl SystemState {
             }
         }
 
-        Ok((best_job_id, best_dt))
+        (best_job_id, best_dt)
     }
 
     pub fn completed_jobs(&self, tol: f64) -> Vec<u64> {
