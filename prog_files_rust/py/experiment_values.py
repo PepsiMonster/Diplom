@@ -11,17 +11,21 @@ SYSTEM_ARCHITECTURE = "loss"
 # Выбор профиля скорости обслуживания
 # "state_dependent" - скорость обслуживания зависит от загруженности системы
 # "constant" - скорость обслуживания sigma_k - константа
+# state_dependent случай интересный
 SERVICE_SPEED_PROFILE = "constant"
 
 # Выбор интенсивности поступления
 # "state_dependent" - интенсивность поступления новых заявок зависит от загрузки
 # "constant" - интенсивность поступления новых заявок константа
+# из в ARRIVAL_PROCESS_FAMILY и не зависит от загрузки системы
 # arrival_rate зависящий от состояни системы - очередь в супермаркете, 
 # когда люди решают даже в нее не вставать, lambda_k динамичная
+# Не имеет никакого отношения к ARRIVAL_PROCESS_FAMILY
 ARRIVAL_RATE_PROFILE = "constant"
 
 # Выбор профиля workload_family
-# "fixed" - один фиксированный закон обслуживания из FIXED_WORKLOAD
+# "fixed" - экспоненциальный для анализа чувствительности 
+# к распределению заявок при фиксированным workload
 # "basic" - короткий набор для быстрых сравнений
 # "full" - полный набор распределений
 WORKLOAD_FAMILY_PROFILE = "basic"
@@ -32,6 +36,36 @@ WORKLOAD_FAMILY_PROFILE = "basic"
 # "erlang_8", "hyperexp_2", "hyperexp_heavy"
 FIXED_WORKLOAD = "exponential"
 
+
+"""
+Позволяет смотреть чувствительность к распределению обслуживания:
+SERVICE_SPEED_PROFILE = "constant"
+ARRIVAL_RATE_PROFILE = "constant"
+WORKLOAD_FAMILY_PROFILE = "basic" или full
+ARRIVAL_PROCESS_FAMILY = ["poisson"] 
+Запуск:
+python py/launcher.py --scenario-family workload-sensitivity
+
+---
+
+Позволяет смотреть чувствительность к типу входящего потока:
+SERVICE_SPEED_PROFILE = "constant"
+ARRIVAL_RATE_PROFILE = "constant"
+WORKLOAD_FAMILY_PROFILE = "fixed"
+ARRIVAL_PROCESS_FAMILY = ["poisson","erlang_2","erlang_4","hyperexp_2",]
+Запуск:
+python py/launcher.py --scenario-family arrival-sensitivity
+
+---
+
+Позволяет смотреть чувствительно при обеих параметрах вместе. 
+SERVICE_SPEED_PROFILE = "constant"
+ARRIVAL_RATE_PROFILE = "constant"
+WORKLOAD_FAMILY_PROFILE = "basic" или full
+ARRIVAL_PROCESS_FAMILY = ["poisson","erlang_2","erlang_4","hyperexp_2",]
+Запуск:
+python py/launcher.py --scenario-family combined-sensitivity
+"""
 
 # Имя серии экспериментов. Используется как метка результатов и папок
 # Пока почти бесполезна, просто подпись, не менять
@@ -84,24 +118,21 @@ TOTAL_RESOURCE_R = 590
 
 
 # Профиль интенсивности поступления lambda_k
-"""
-У меня появилась идея задать интенсивность поступления заявок как динамичную величину.
-Сейчас со статичным экспоненциальным потоком pi_hat смещен просто к краю.
-Это изменится, если дальше входные потоки будут по разному распределены.
-Но также можно например задать разные значения, на разных кусках временного интервала. 
-Пример - телефонная станция, которая в разное время суток загружена сильно по разному.
-"""
+
 # Интенсивность поступления при малой и средней загрузке
-ARRIVAL_NORMAL_VALUE = 82.20
+ARRIVAL_NORMAL_VALUE = 82.20 # наша λ
 
 # Насколько близко к K начинается снижение интенсивности
 # threshold_k = CAPACITY_K - ARRIVAL_THRESHOLD_OFFSET
+# только в state_dependent профиле
 ARRIVAL_THRESHOLD_OFFSET = 18
 
 # Интенсивность поступления при высокой загрузке
+# только в state_dependent профиле
 ARRIVAL_REDUCED_VALUE = 72.20
 
 # Интенсивность в полном состоянии k = K
+# только в state_dependent профиле
 ARRIVAL_FULL_STATE_VALUE = 60.0 # было 0.0, но смысла в этом нет
 
 
@@ -168,16 +199,17 @@ WORKLOAD_HYPEREXP_HEAVY_FAST_MULTIPLIER = 6.0
 
 # Будущий резерв под тип входящего потока
 
-# Пока Rust-движок это ещё не использует, но сюда удобно заранее положить
-# будущую экспериментальную ручку для arrival-process sensitivity
+
 # Позволит исследовать чувствительность к "типу входящего потока"
 ARRIVAL_PROCESS_FAMILY = [
-    "poisson",
-    "erlang_2",
-    "erlang_4",
-    "hyperexp_2",
+    "poisson", # A∼Exp(λ)
+    "erlang_2", # A∼Erlang(2, mean=1/λ)
+    "erlang_4", # A∼Erlang(4, mean=1/λ)
+    "hyperexp_2", # A∼HyperExp2​,E[A]=1/λ
 ]
 
 # Параметры для arrival-процесса HyperExp(2)
 ARRIVAL_HYPEREXP_P = 0.75
 ARRIVAL_HYPEREXP_FAST_MULTIPLIER = 4.0
+
+# взять маленькое, среднее и большшое значнеи для серии экспериментов
