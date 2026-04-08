@@ -104,6 +104,8 @@ pub enum AdmissionPlacement {
 pub struct Job {
     pub job_id: u64,
     pub arrival_time: f64,
+    pub queue_enter_time: Option<f64>,
+    pub service_start_time: Option<f64>,
     pub resource_demand: u32,
     pub total_workload: f64,
     pub remaining_workload: f64,
@@ -123,6 +125,8 @@ impl Job {
         Ok(Self {
             job_id,
             arrival_time,
+            queue_enter_time: None,
+            service_start_time: None,
             resource_demand,
             total_workload,
             remaining_workload: total_workload,
@@ -144,6 +148,8 @@ impl Job {
         Ok(Self {
             job_id,
             arrival_time,
+            queue_enter_time: None,
+            service_start_time: None,
             resource_demand,
             total_workload,
             remaining_workload,
@@ -294,7 +300,7 @@ impl SystemState {
 
     pub fn admit_or_enqueue(
         &mut self,
-        job: Job,
+        mut job: Job,
         scenario: &ScenarioConfig,
     ) -> Result<AdmissionPlacement> {
         let decision = self.can_admit_job(job.resource_demand, scenario)?;
@@ -309,7 +315,10 @@ impl SystemState {
             .active_jobs
             .iter()
             .any(|active| active.job_id == job.job_id)
-            || self.waiting_queue.iter().any(|queued| queued.job_id == job.job_id)
+            || self
+                .waiting_queue
+                .iter()
+                .any(|queued| queued.job_id == job.job_id)
         {
             return Err(ModelError::Validation(format!(
                 "Заявка job_id={} уже есть в системе",
@@ -320,9 +329,11 @@ impl SystemState {
         self.occupied_resource_total += job.resource_demand;
 
         if self.has_free_server(scenario) {
+            job.service_start_time = Some(self.current_time);
             self.active_jobs.push(job);
             Ok(AdmissionPlacement::Active)
         } else {
+            job.queue_enter_time = Some(self.current_time);
             self.waiting_queue.push_back(job);
             Ok(AdmissionPlacement::Queued)
         }
@@ -336,9 +347,10 @@ impl SystemState {
     pub fn promote_from_queue(&mut self, scenario: &ScenarioConfig) -> Vec<u64> {
         let mut promoted: Vec<u64> = Vec::new();
         while self.has_free_server(scenario) {
-            let Some(job) = self.waiting_queue.pop_front() else {
+            let Some(mut job) = self.waiting_queue.pop_front() else {
                 break;
             };
+            job.service_start_time = Some(self.current_time);
             promoted.push(job.job_id);
             self.active_jobs.push(job);
         }
@@ -499,7 +511,7 @@ mod tests {
     use super::*;
     use crate::params::{
         build_base_scenario_from_values, load_default_external_experiment_values,
-        standard_workload_family_from_values,
+        standard_workload_family_from_values, ArrivalProcessConfig,
     };
 
     #[test]
@@ -523,6 +535,7 @@ mod tests {
         let scenario = build_base_scenario_from_values(
             &values,
             workloads.get("exponential").unwrap().clone(),
+            ArrivalProcessConfig::Poisson,
             "_test_resource",
         )
         .unwrap();

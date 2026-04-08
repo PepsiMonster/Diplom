@@ -12,8 +12,7 @@ pub enum ParamsError {
 
 type Result<T> = std::result::Result<T, ParamsError>;
 
-pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str =
-    "py/generated/experiment_values.json";
+pub const DEFAULT_EXTERNAL_EXPERIMENT_VALUES_PATH: &str = "py/generated/experiment_values.json";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +49,10 @@ pub struct ExternalExperimentValues {
     pub system_architecture: SystemArchitecture,
     #[serde(default)]
     pub queue_capacity: usize,
+    pub service_speed_profile: String,
+    pub arrival_rate_profile: String,
+    pub workload_family_profile: String,
+    pub fixed_workload: String,
 
     pub capacity_k: usize,
     pub servers_n: usize,
@@ -74,13 +77,13 @@ pub struct ExternalExperimentValues {
     pub workload_hyperexp_heavy_fast_multiplier: f64,
 
     pub arrival_process_family: Vec<String>,
+    pub arrival_hyperexp_p: f64,
+    pub arrival_hyperexp_fast_multiplier: f64,
 }
 
 pub fn load_external_experiment_values(path: impl AsRef<Path>) -> Result<ExternalExperimentValues> {
     let text = fs::read_to_string(path).map_err(|e| {
-        ParamsError::Validation(format!(
-            "Не удалось прочитать файл внешних параметров: {e}"
-        ))
+        ParamsError::Validation(format!("Не удалось прочитать файл внешних параметров: {e}"))
     })?;
 
     let values: ExternalExperimentValues = serde_json::from_str(&text).map_err(|e| {
@@ -484,6 +487,31 @@ impl WorkloadDistributionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ArrivalProcessConfig {
+    Poisson,
+    Erlang { order: usize },
+    Hyperexponential2 { p: f64, fast_rate_multiplier: f64 },
+}
+
+impl ArrivalProcessConfig {
+    pub fn validate(&self) -> Result<()> {
+        match self {
+            Self::Poisson => Ok(()),
+            Self::Erlang { order } => ensure_positive_usize("arrival_erlang_order", *order),
+            Self::Hyperexponential2 {
+                p,
+                fast_rate_multiplier,
+            } => {
+                ensure_probability("arrival_hyperexp_p", *p)?;
+                ensure_positive_f64("arrival_hyperexp_fast_multiplier", *fast_rate_multiplier)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioConfig {
     pub name: String,
     pub system_architecture: SystemArchitecture,
@@ -491,6 +519,10 @@ pub struct ScenarioConfig {
     pub servers_n: usize,
     pub total_resource_r: u32,
     pub arrival_rate_by_state: Vec<f64>,
+    pub arrival_rate_profile: String,
+    pub service_speed_profile: String,
+    pub workload_family_profile: String,
+    pub arrival_process: ArrivalProcessConfig,
     pub service_speed_by_state: Vec<f64>,
     pub resource_distribution: ResourceDistributionConfig,
     pub workload_distribution: WorkloadDistributionConfig,
@@ -527,9 +559,18 @@ impl ScenarioConfig {
             ensure_nonnegative_f64(&format!("service_speed_by_state[{k}]"), *value)?;
         }
 
+        self.arrival_process.validate()?;
         self.resource_distribution.validate()?;
         self.workload_distribution.validate()?;
         self.simulation.validate()?;
+
+        if !matches!(self.arrival_process, ArrivalProcessConfig::Poisson)
+            && self.arrival_rate_profile == "state_dependent"
+        {
+            return Err(ParamsError::Validation(
+                "Пока не поддерживается state-dependent arrival_rate_profile вместе с non-Poisson arrival_process. Это будет добавлено в следующей версии модели.".to_string(),
+            ));
+        }
 
         match self.system_architecture {
             SystemArchitecture::Loss => {
@@ -603,12 +644,20 @@ impl ScenarioConfig {
             self.servers_n
         ));
         s.push_str(&format!(
-            "Q (ёмкость очереди):                  {}\n",
-            self.queue_capacity()
-        ));
-        s.push_str(&format!(
             "R (общий ресурс):                    {}\n",
             self.total_resource_r
+        ));
+        s.push_str(&format!(
+            "Профиль arrival_rate:                {}\n",
+            self.arrival_rate_profile
+        ));
+        s.push_str(&format!(
+            "Профиль service_speed:               {}\n",
+            self.service_speed_profile
+        ));
+        s.push_str(&format!(
+            "Профиль workload_family:             {}\n",
+            self.workload_family_profile
         ));
         s.push_str(&format!(
             "Распределение ресурса:               {}\n",
@@ -621,6 +670,10 @@ impl ScenarioConfig {
         s.push_str(&format!(
             "Распределение объёма работы:         {}\n",
             self.workload_distribution.label()
+        ));
+        s.push_str(&format!(
+            "Профиль входного потока:             {:?}\n",
+            self.arrival_process
         ));
         s.push_str(&format!(
             "Средний объём работы:                {:.4}\n",
@@ -729,6 +782,50 @@ pub fn linear_decreasing_profile(
         .collect())
 }
 
+fn workload_config_from_key(
+    values: &ExternalExperimentValues,
+    key: &str,
+) -> Result<WorkloadDistributionConfig> {
+    match key {
+        "deterministic" => {
+            WorkloadDistributionConfig::deterministic(values.mean_workload, "Deterministic")
+        }
+        "exponential" => {
+            WorkloadDistributionConfig::exponential(values.mean_workload, "Exponential")
+        }
+        "erlang_2" => WorkloadDistributionConfig::erlang(
+            values.mean_workload,
+            2,
+            Some("Erlang(2)".to_string()),
+        ),
+        "erlang_4" => WorkloadDistributionConfig::erlang(
+            values.mean_workload,
+            4,
+            Some("Erlang(4)".to_string()),
+        ),
+        "erlang_8" => WorkloadDistributionConfig::erlang(
+            values.mean_workload,
+            8,
+            Some("Erlang(8)".to_string()),
+        ),
+        "hyperexp_2" => WorkloadDistributionConfig::hyperexponential2(
+            values.mean_workload,
+            values.workload_hyperexp_p,
+            values.workload_hyperexp_fast_multiplier,
+            "HyperExp(2)",
+        ),
+        "hyperexp_heavy" => WorkloadDistributionConfig::hyperexponential2(
+            values.mean_workload,
+            values.workload_hyperexp_heavy_p,
+            values.workload_hyperexp_heavy_fast_multiplier,
+            "HyperExpHeavy",
+        ),
+        _ => Err(ParamsError::Validation(format!(
+            "Неизвестный тип workload_distribution: '{key}'"
+        ))),
+    }
+}
+
 pub fn standard_workload_family_from_values(
     values: &ExternalExperimentValues,
 ) -> Result<BTreeMap<String, WorkloadDistributionConfig>> {
@@ -736,47 +833,7 @@ pub fn standard_workload_family_from_values(
 
     let mut family = BTreeMap::new();
     for key in &values.workload_family {
-        let workload_cfg = match key.as_str() {
-            "deterministic" => WorkloadDistributionConfig::deterministic(
-                values.mean_workload,
-                "Deterministic",
-            )?,
-            "exponential" => {
-                WorkloadDistributionConfig::exponential(values.mean_workload, "Exponential")?
-            }
-            "erlang_2" => WorkloadDistributionConfig::erlang(
-                values.mean_workload,
-                2,
-                Some("Erlang(2)".to_string()),
-            )?,
-            "erlang_4" => WorkloadDistributionConfig::erlang(
-                values.mean_workload,
-                4,
-                Some("Erlang(4)".to_string()),
-            )?,
-            "erlang_8" => WorkloadDistributionConfig::erlang(
-                values.mean_workload,
-                8,
-                Some("Erlang(8)".to_string()),
-            )?,
-            "hyperexp_2" => WorkloadDistributionConfig::hyperexponential2(
-                values.mean_workload,
-                values.workload_hyperexp_p,
-                values.workload_hyperexp_fast_multiplier,
-                "HyperExp(2)",
-            )?,
-            "hyperexp_heavy" => WorkloadDistributionConfig::hyperexponential2(
-                values.mean_workload,
-                values.workload_hyperexp_heavy_p,
-                values.workload_hyperexp_heavy_fast_multiplier,
-                "HyperExpHeavy",
-            )?,
-            _ => {
-                return Err(ParamsError::Validation(format!(
-                    "Неизвестный тип workload_distribution в workload_family: '{key}'"
-                )));
-            }
-        };
+        let workload_cfg = workload_config_from_key(values, key)?;
         family.insert(key.clone(), workload_cfg);
     }
 
@@ -787,6 +844,58 @@ pub fn standard_workload_family(mean: f64) -> Result<BTreeMap<String, WorkloadDi
     let mut values = load_default_external_experiment_values()?;
     values.mean_workload = mean;
     standard_workload_family_from_values(&values)
+}
+
+pub fn standard_arrival_process_family_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ArrivalProcessConfig>> {
+    let mut family = BTreeMap::new();
+    for key in &values.arrival_process_family {
+        let cfg = match key.as_str() {
+            "poisson" => ArrivalProcessConfig::Poisson,
+            "erlang_2" => ArrivalProcessConfig::Erlang { order: 2 },
+            "erlang_4" => ArrivalProcessConfig::Erlang { order: 4 },
+            "hyperexp_2" => ArrivalProcessConfig::Hyperexponential2 {
+                p: values.arrival_hyperexp_p,
+                fast_rate_multiplier: values.arrival_hyperexp_fast_multiplier,
+            },
+            _ => {
+                return Err(ParamsError::Validation(format!(
+                    "Неизвестный тип arrival_process в arrival_process_family: '{key}'"
+                )));
+            }
+        };
+        family.insert(key.clone(), cfg);
+    }
+    Ok(family)
+}
+
+pub fn build_fixed_workload_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<WorkloadDistributionConfig> {
+    workload_config_from_key(values, &values.fixed_workload)
+}
+
+pub fn build_fixed_arrival_process_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<ArrivalProcessConfig> {
+    let family = standard_arrival_process_family_from_values(values)?;
+    if values.arrival_process_family.len() == 1 {
+        return family.into_iter().next().map(|(_, cfg)| cfg).ok_or_else(|| {
+            ParamsError::Validation(
+                "Не удалось построить фиксированный arrival process".to_string(),
+            )
+        });
+    }
+
+    if let Some(cfg) = family.get("poisson") {
+        return Ok(cfg.clone());
+    }
+
+    Err(ParamsError::Validation(format!(
+        "Для workload-sensitivity ожидается фиксированный arrival process. Укажи ARRIVAL_PROCESS_FAMILY из одного элемента или включи 'poisson'. Сейчас ARRIVAL_PROCESS_FAMILY={:?}",
+        values.arrival_process_family
+    )))
 }
 
 pub fn build_simulation_config_from_values(
@@ -828,17 +937,29 @@ pub fn build_base_resource_distribution() -> Result<ResourceDistributionConfig> 
 }
 
 pub fn build_arrival_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
-    let threshold_k = values
-        .capacity_k
-        .saturating_sub(values.arrival_threshold_offset);
+    match values.arrival_rate_profile.as_str() {
+        "state_dependent" => {
+            let threshold_k = values
+                .capacity_k
+                .saturating_sub(values.arrival_threshold_offset);
 
-    threshold_profile(
-        values.capacity_k,
-        values.arrival_normal_value,
-        threshold_k,
-        values.arrival_reduced_value,
-        values.arrival_full_state_value,
-    )
+            threshold_profile(
+                values.capacity_k,
+                values.arrival_normal_value,
+                threshold_k,
+                values.arrival_reduced_value,
+                values.arrival_full_state_value,
+            )
+        }
+        "constant" => constant_profile(
+            values.capacity_k,
+            values.arrival_normal_value,
+            Some(values.arrival_normal_value),
+        ),
+        other => Err(ParamsError::Validation(format!(
+            "Неизвестный arrival_rate_profile: '{other}'. Ожидается 'state_dependent' или 'constant'"
+        ))),
+    }
 }
 
 pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
@@ -848,12 +969,22 @@ pub fn build_base_arrival_profile(capacity_k: usize) -> Result<Vec<f64>> {
 }
 
 pub fn build_service_profile_from_values(values: &ExternalExperimentValues) -> Result<Vec<f64>> {
-    linear_decreasing_profile(
-        values.capacity_k,
-        values.service_start_value,
-        values.service_step,
-        values.service_floor_value,
-    )
+    match values.service_speed_profile.as_str() {
+        "state_dependent" => linear_decreasing_profile(
+            values.capacity_k,
+            values.service_start_value,
+            values.service_step,
+            values.service_floor_value,
+        ),
+        "constant" => constant_profile(
+            values.capacity_k,
+            values.service_start_value,
+            Some(values.service_start_value),
+        ),
+        other => Err(ParamsError::Validation(format!(
+            "Неизвестный service_speed_profile: '{other}'. Ожидается 'state_dependent' или 'constant'"
+        ))),
+    }
 }
 
 pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
@@ -865,8 +996,13 @@ pub fn build_base_service_profile(capacity_k: usize) -> Result<Vec<f64>> {
 pub fn build_base_scenario_from_values(
     values: &ExternalExperimentValues,
     workload_distribution: WorkloadDistributionConfig,
+    arrival_process: ArrivalProcessConfig,
     name_suffix: &str,
 ) -> Result<ScenarioConfig> {
+    let arch = match values.system_architecture {
+        SystemArchitecture::Loss => "loss",
+        SystemArchitecture::Buffer => "buffer",
+    };
     let scenario = ScenarioConfig {
         name: format!("base{name_suffix}"),
         system_architecture: values.system_architecture,
@@ -874,11 +1010,21 @@ pub fn build_base_scenario_from_values(
         servers_n: values.servers_n,
         total_resource_r: values.total_resource_r,
         arrival_rate_by_state: build_arrival_profile_from_values(values)?,
+        arrival_rate_profile: values.arrival_rate_profile.clone(),
+        service_speed_profile: values.service_speed_profile.clone(),
+        workload_family_profile: values.workload_family_profile.clone(),
+        arrival_process,
         service_speed_by_state: build_service_profile_from_values(values)?,
         resource_distribution: build_resource_distribution_from_values(values)?,
         workload_distribution,
         simulation: build_simulation_config_from_values(values)?,
-        note: "Сценарий, собранный из внешнего Python-конфига.".to_string(),
+        note: format!(
+            "arch={}; arrival_rate_profile={}; service_speed_profile={}; workload_family_profile={}",
+            arch,
+            values.arrival_rate_profile,
+            values.service_speed_profile,
+            values.workload_family_profile
+        ),
     };
 
     scenario.validate()?;
@@ -890,18 +1036,78 @@ pub fn build_base_scenario(
     name_suffix: &str,
 ) -> Result<ScenarioConfig> {
     let values = load_default_external_experiment_values()?;
-    build_base_scenario_from_values(&values, workload_distribution, name_suffix)
+    build_base_scenario_from_values(
+        &values,
+        workload_distribution,
+        ArrivalProcessConfig::Poisson,
+        name_suffix,
+    )
 }
 
 pub fn build_sensitivity_scenarios_from_values(
     values: &ExternalExperimentValues,
 ) -> Result<BTreeMap<String, ScenarioConfig>> {
+    build_workload_sensitivity_scenarios_from_values(values)
+}
+
+pub fn build_workload_sensitivity_scenarios_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ScenarioConfig>> {
     let family = standard_workload_family_from_values(values)?;
+    let fixed_arrival = build_fixed_arrival_process_from_values(values)?;
     let mut scenarios = BTreeMap::new();
 
     for (key, workload_cfg) in family {
-        let scenario = build_base_scenario_from_values(values, workload_cfg, &format!("_{key}"))?;
-        scenarios.insert(key, scenario);
+        let scenario = build_base_scenario_from_values(
+            values,
+            workload_cfg,
+            fixed_arrival.clone(),
+            &format!("_work_{key}"),
+        )?;
+        scenarios.insert(format!("work_{key}"), scenario);
+    }
+
+    Ok(scenarios)
+}
+
+pub fn build_arrival_sensitivity_scenarios_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ScenarioConfig>> {
+    let arrivals = standard_arrival_process_family_from_values(values)?;
+    let workload = build_fixed_workload_from_values(values)?;
+    let mut scenarios = BTreeMap::new();
+
+    for (key, arrival_cfg) in arrivals {
+        let scenario = build_base_scenario_from_values(
+            values,
+            workload.clone(),
+            arrival_cfg,
+            &format!("_arr_{key}"),
+        )?;
+        scenarios.insert(format!("arr_{key}"), scenario);
+    }
+
+    Ok(scenarios)
+}
+
+pub fn build_combined_sensitivity_scenarios_from_values(
+    values: &ExternalExperimentValues,
+) -> Result<BTreeMap<String, ScenarioConfig>> {
+    let arrivals = standard_arrival_process_family_from_values(values)?;
+    let workloads = standard_workload_family_from_values(values)?;
+    let mut scenarios = BTreeMap::new();
+
+    for (arr_key, arrival_cfg) in &arrivals {
+        for (work_key, workload_cfg) in &workloads {
+            let key = format!("arr_{arr_key}__work_{work_key}");
+            let scenario = build_base_scenario_from_values(
+                values,
+                workload_cfg.clone(),
+                arrival_cfg.clone(),
+                &format!("_{key}"),
+            )?;
+            scenarios.insert(key, scenario);
+        }
     }
 
     Ok(scenarios)
@@ -910,7 +1116,7 @@ pub fn build_sensitivity_scenarios_from_values(
 pub fn build_sensitivity_scenarios(mean_workload: f64) -> Result<BTreeMap<String, ScenarioConfig>> {
     let mut values = load_default_external_experiment_values()?;
     values.mean_workload = mean_workload;
-    build_sensitivity_scenarios_from_values(&values)
+    build_workload_sensitivity_scenarios_from_values(&values)
 }
 
 pub fn print_scenario_summary(scenario: &ScenarioConfig) -> Result<()> {
@@ -924,8 +1130,9 @@ mod tests {
 
     #[test]
     fn builds_standard_sensitivity_family() {
-        let scenarios = build_sensitivity_scenarios(1.0).unwrap();
-        assert_eq!(scenarios.len(), 7);
+        let values = load_default_external_experiment_values().unwrap();
+        let scenarios = build_sensitivity_scenarios(values.mean_workload).unwrap();
+        assert_eq!(scenarios.len(), values.workload_family.len());
 
         for scenario in scenarios.values() {
             scenario.validate().unwrap();
@@ -950,8 +1157,13 @@ mod tests {
 
     #[test]
     fn threshold_profile_has_zero_at_full_state() {
-        let p = build_base_arrival_profile(10).unwrap();
-        assert_eq!(p.len(), 11);
-        assert_eq!(p[10], 0.0);
+        let values = load_default_external_experiment_values().unwrap();
+        let p = build_arrival_profile_from_values(&values).unwrap();
+        assert_eq!(p.len(), values.capacity_k + 1);
+        if values.arrival_rate_profile == "state_dependent" {
+            assert_eq!(p[values.capacity_k], values.arrival_full_state_value);
+        } else {
+            assert_eq!(p[values.capacity_k], values.arrival_normal_value);
+        }
     }
 }

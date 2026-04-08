@@ -11,18 +11,26 @@ SYSTEM_ARCHITECTURE = "loss"
 # Выбор профиля скорости обслуживания
 # "state_dependent" - скорость обслуживания зависит от загруженности системы
 # "constant" - скорость обслуживания sigma_k - константа
-SERVICE_SPEED_PROFILE = "state_dependent"
+SERVICE_SPEED_PROFILE = "constant"
 
 # Выбор интенсивности поступления
 # "state_dependent" - интенсивность поступления новых заявок зависит от загрузки
 # "constant" - интенсивность поступления новых заявок константа
 # arrival_rate зависящий от состояни системы - очередь в супермаркете, 
 # когда люди решают даже в нее не вставать, lambda_k динамичная
-ARRIVAL_RATE_PROFILE = "state_dependent"
+ARRIVAL_RATE_PROFILE = "constant"
 
 # Выбор профиля workload_family
-# "basic" содержит 
-WORKLOAD_FAMILY_PROFILE = "full"
+# "fixed" - один фиксированный закон обслуживания из FIXED_WORKLOAD
+# "basic" - короткий набор для быстрых сравнений
+# "full" - полный набор распределений
+WORKLOAD_FAMILY_PROFILE = "basic"
+
+# Какой закон обслуживания использовать при WORKLOAD_FAMILY_PROFILE = "fixed"
+# Допустимы:
+# "deterministic", "exponential", "erlang_2", "erlang_4",
+# "erlang_8", "hyperexp_2", "hyperexp_heavy"
+FIXED_WORKLOAD = "exponential"
 
 
 # Имя серии экспериментов. Используется как метка результатов и папок
@@ -72,7 +80,7 @@ CAPACITY_K = 96
 SERVERS_N = 96
 
 # Общий объём доступного ресурса.
-TOTAL_RESOURCE_R = 700
+TOTAL_RESOURCE_R = 590
 
 
 # Профиль интенсивности поступления lambda_k
@@ -128,21 +136,22 @@ MEAN_WORKLOAD = 1.0
 # Какие виды распределений объёма работы сравниваем
 # Позволяет исследовать чувствительность к распределению времени обслуживания
 # Не напрямую а через отношение workload к sigma_k: integral_{0}^{T} sigma_k(u) du >= W
-WORKLOAD_FAMILY = [
-    "deterministic", 
+WORKLOAD_FAMILY_BASIC = [
+    "deterministic",
+    "exponential",
+    "erlang_4",
+    "hyperexp_heavy",
+]
+
+WORKLOAD_FAMILY_FULL = [
+    "deterministic",
     "exponential",
     "erlang_2",
     "erlang_4",
     "erlang_8",
     "hyperexp_2",
     "hyperexp_heavy",
-] # Сейчас это фулл, надо переделать его в других файлах под это
-
-# basic=[
-# "deterministic", 
-# "exponential", 
-# "erlang_4", 
-# "hyperexp_heavy"]
+]
 
 # Параметр p для HyperExp(2)
 WORKLOAD_HYPEREXP_P = 0.75
@@ -168,3 +177,7 @@ ARRIVAL_PROCESS_FAMILY = [
     "erlang_4",
     "hyperexp_2",
 ]
+
+# Параметры для arrival-процесса HyperExp(2)
+ARRIVAL_HYPEREXP_P = 0.75
+ARRIVAL_HYPEREXP_FAST_MULTIPLIER = 4.0
