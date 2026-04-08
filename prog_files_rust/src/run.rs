@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,13 +42,6 @@ pub enum RunError {
 }
 
 type Result<T> = std::result::Result<T, RunError>;
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct PlotSuiteData {
-    suite_name: String,
-    created_at: String,
-    scenario_results: BTreeMap<String, serde_json::Value>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ScenarioFamily {
@@ -243,30 +235,6 @@ fn resolve_suite_result_json(input_path: impl AsRef<Path>) -> Result<PathBuf> {
         "Путь не найден: {}",
         path.display()
     )))
-}
-
-fn load_suite_data(input_path: impl AsRef<Path>) -> Result<PlotSuiteData> {
-    let json_path = resolve_suite_result_json(input_path)?;
-    let text = fs::read_to_string(json_path)?;
-    Ok(serde_json::from_str(&text)?)
-}
-
-fn collect_png_paths(output_dir: impl AsRef<Path>) -> Result<Vec<PathBuf>> {
-    let mut pngs = Vec::new();
-    for entry in fs::read_dir(output_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let is_png = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("png"))
-            .unwrap_or(false);
-        if is_png {
-            pngs.push(path);
-        }
-    }
-    pngs.sort();
-    Ok(pngs)
 }
 
 fn short_profile(value: &str) -> &str {
@@ -482,11 +450,17 @@ fn render_suite_summary_text(suite_result: &ExperimentSuiteResult) -> String {
         for metric_name in [
             "mean_num_jobs",
             "mean_occupied_resource",
+            "mean_queue_length",
+            "queueing_probability",
             "loss_probability",
             "throughput",
             "mean_service_time",
             "mean_waiting_time",
             "mean_sojourn_time",
+            "std_service_time",
+            "std_waiting_time",
+            "std_sojourn_time",
+            "completed_time_samples",
             "accepted_arrivals",
             "rejected_arrivals",
             "completed_jobs",
@@ -605,123 +579,6 @@ fn save_single_run_report(
     ]);
 
     save_markdown_report(&lines, output_root.join("single_run_report.md"))
-}
-
-fn save_suite_report(
-    suite_result: &ExperimentSuiteResult,
-    output_root: impl AsRef<Path>,
-    suite_dir: impl AsRef<Path>,
-) -> Result<PathBuf> {
-    let output_root = output_root.as_ref();
-    let suite_dir = suite_dir.as_ref();
-
-    let mut lines = vec![
-        "# Отчёт по серии экспериментов".to_string(),
-        "".to_string(),
-        "## Что произошло".to_string(),
-        "Серия прогонов выполнена. В этом отчёте собраны агрегированные итоги по каждому сценарию."
-            .to_string(),
-        "".to_string(),
-        "## Общая информация".to_string(),
-        format!("- Имя серии: **{}**.", suite_result.suite_name),
-        format!("- Время формирования: **{}**.", suite_result.created_at),
-        format!(
-            "- Число сценариев: **{}**.",
-            suite_result.scenario_results.len()
-        ),
-        "".to_string(),
-        "## Итоги по сценариям".to_string(),
-    ];
-
-    for (scenario_key, result) in &suite_result.scenario_results {
-        lines.push(format!("### {}", scenario_key));
-        lines.push(format!("- Описание: {}.", result.scenario_description));
-        lines.push(format!("- Replications: **{}**.", result.replications));
-
-        for metric_name in [
-            "throughput",
-            "loss_probability",
-            "mean_num_jobs",
-            "mean_occupied_resource",
-        ] {
-            if let Some(summary) = result.metric_summaries.get(metric_name) {
-                lines.push(format!(
-                    "- {}: mean={:.6}, 95% CI=[{:.6}, {:.6}].",
-                    metric_name, summary.mean, summary.ci_low, summary.ci_high
-                ));
-            }
-        }
-
-        lines.push(String::new());
-    }
-
-    lines.extend([
-        "## Где лежат артефакты".to_string(),
-        format!("- Папка серии: `{}`.", suite_dir.display()),
-        format!(
-            "- Таблицы/JSON: `{}`, `{}`, `{}`, `{}`.",
-            suite_dir.join("aggregated_summary.csv").display(),
-            suite_dir.join("all_runs.csv").display(),
-            suite_dir.join("metric_summaries_long.csv").display(),
-            suite_dir.join("suite_result.json").display()
-        ),
-    ]);
-
-    save_markdown_report(&lines, output_root.join("suite_report.md"))
-}
-
-fn save_plots_report(
-    suite_data: &PlotSuiteData,
-    input_path: impl AsRef<Path>,
-    output_dir: impl AsRef<Path>,
-    created_paths: &[PathBuf],
-) -> Result<PathBuf> {
-    let input_path = input_path.as_ref();
-    let output_dir = output_dir.as_ref();
-
-    let mut lines = vec![
-        "# Отчёт по построению графиков".to_string(),
-        "".to_string(),
-        "## Что произошло".to_string(),
-        "Графики успешно построены на основании сохранённых результатов серии.".to_string(),
-        "".to_string(),
-        "## Источник данных".to_string(),
-        format!("- Вход: `{}`.", input_path.display()),
-        format!("- Набор: **{}**.", suite_data.suite_name),
-        format!("- Создан: **{}**.", suite_data.created_at),
-        format!("- Сценариев: **{}**.", suite_data.scenario_results.len()),
-        "".to_string(),
-        "## Результат".to_string(),
-        format!("- Папка графиков: `{}`.", output_dir.display()),
-        format!("- Построено PNG-файлов: **{}**.", created_paths.len()),
-    ];
-
-    if !created_paths.is_empty() {
-        lines.push(String::new());
-        lines.push("## Встроенные графики".to_string());
-
-        let report_dir = output_dir.parent().unwrap_or(output_dir);
-
-        for image_path in created_paths {
-            let filename = image_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("plot.png");
-
-            let relative_path = image_path
-                .strip_prefix(report_dir)
-                .unwrap_or(image_path)
-                .to_string_lossy()
-                .replace('\\', "/");
-
-            lines.push(format!("### {}", filename));
-            lines.push(format!("![{}]({})", filename, relative_path));
-            lines.push(String::new());
-        }
-    }
-
-    let parent = output_dir.parent().unwrap_or(output_dir);
-    save_markdown_report(&lines, parent.join("plots_report.md"))
 }
 
 fn run_python_plots(
@@ -923,16 +780,12 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
 
     let output_root = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
-    let report_path = save_suite_report(&suite_result, &output_root, &suite_dir)?;
     let txt_summary_path = save_text_report(
         &render_suite_summary_text(&suite_result),
         output_root.join("suite_summary.txt"),
     )?;
-    let suite_data = load_suite_data(&suite_dir)?;
     let plots_dir = suite_dir.join("plots");
     run_python_plots(&suite_dir, &plots_dir, &args.metrics, 200)?;
-    let created = collect_png_paths(&plots_dir)?;
-    let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
     println!(
@@ -943,19 +796,13 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
         "Текстовый summary сохранён в: {}",
         txt_summary_path.display()
     );
-    println!("Markdown-отчёт сохранён в: {}", report_path.display());
     println!("Графики сохранены в: {}", plots_dir.display());
-    println!(
-        "Markdown-отчёт по графикам сохранён в: {}",
-        plots_report_path.display()
-    );
     println!("{}", "=".repeat(80));
 
     Ok(output_root)
 }
 
 pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
-    let suite_data = load_suite_data(&args.input)?;
     let json_path = resolve_suite_result_json(&args.input)?;
 
     let output_dir = if let Some(out) = &args.output_dir {
@@ -965,13 +812,10 @@ pub fn run_plots_mode(args: &PlotsArgs) -> Result<PathBuf> {
     };
 
     run_python_plots(&args.input, &output_dir, &args.metrics, args.dpi)?;
-    let created = collect_png_paths(&output_dir)?;
 
     println!("{}", "=".repeat(80));
     println!("Папка с графиками: {}", output_dir.display());
 
-    let report_path = save_plots_report(&suite_data, &args.input, &output_dir, &created)?;
-    println!("Markdown-отчёт сохранён в: {}", report_path.display());
     println!("{}", "=".repeat(80));
 
     Ok(output_dir)
@@ -991,17 +835,13 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     let suite_dir = make_timestamped_dir_with_slug(&args.output_root, &profile_slug(&values))?;
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
-    let suite_report_path = save_suite_report(&suite_result, &suite_dir, &suite_dir)?;
     let suite_txt_summary_path = save_text_report(
         &render_suite_summary_text(&suite_result),
         suite_dir.join("suite_summary.txt"),
     )?;
 
-    let suite_data = load_suite_data(&suite_dir)?;
     let plots_dir = suite_dir.join("plots");
     run_python_plots(&suite_dir, &plots_dir, &args.metrics, args.dpi)?;
-    let created = collect_png_paths(&plots_dir)?;
-    let plots_report_path = save_plots_report(&suite_data, &suite_dir, &plots_dir, &created)?;
 
     println!("{}", "=".repeat(80));
     println!("Полный запуск завершён.");
@@ -1010,11 +850,6 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     println!(
         "Текстовый summary по серии: {}",
         suite_txt_summary_path.display()
-    );
-    println!("Markdown-отчёт по серии: {}", suite_report_path.display());
-    println!(
-        "Markdown-отчёт по графикам: {}",
-        plots_report_path.display()
     );
     println!("{}", "=".repeat(80));
 

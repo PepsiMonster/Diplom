@@ -293,8 +293,67 @@ def _metric_display_name(metric_name: str) -> str:
         "rejected_capacity": "Отказы по K",
         "rejected_server": "Отказы по N",
         "rejected_resource": "Отказы по R",
+        "mean_queue_length": "Средняя длина очереди",
+        "queueing_probability": "Вероятность попадания в очередь",
+        "mean_service_time": "Среднее время обслуживания",
+        "mean_waiting_time": "Среднее время ожидания",
+        "mean_sojourn_time": "Среднее время пребывания",
     }
     return replacements.get(metric_name, metric_name)
+
+
+def _metric_unit(metric_name: str) -> str | None:
+    time_metrics = {
+        "mean_service_time",
+        "mean_waiting_time",
+        "mean_sojourn_time",
+        "std_service_time",
+        "std_waiting_time",
+        "std_sojourn_time",
+        "total_time",
+        "warmup_time",
+        "observed_time",
+    }
+    probability_metrics = {"loss_probability", "queueing_probability"}
+    jobs_count_metrics = {
+        "mean_num_jobs",
+        "mean_queue_length",
+        "mean_waiting_jobs",
+        "accepted_arrivals",
+        "rejected_arrivals",
+        "completed_jobs",
+        "rejected_capacity",
+        "rejected_server",
+        "rejected_resource",
+        "arrival_attempts",
+    }
+    rate_metrics = {"throughput"}
+
+    if metric_name in time_metrics:
+        return "ед. времени"
+    if metric_name in probability_metrics:
+        return "доля"
+    if metric_name in jobs_count_metrics:
+        return "заявки"
+    if metric_name in rate_metrics:
+        return "заявки / ед. времени"
+    return None
+
+
+def _metric_ylabel(metric_name: str) -> str:
+    unit = _metric_unit(metric_name)
+    title = _metric_display_name(metric_name)
+    return f"{title} [{unit}]" if unit else title
+
+
+def _suite_is_loss_only(suite_data: PlotSuiteData) -> bool:
+    if not suite_data.scenario_results:
+        return False
+    for payload in suite_data.scenario_results.values():
+        desc = str(payload.get("scenario_description", "")).lower()
+        if "arch=loss" not in desc:
+            return False
+    return True
 
 
 # ============================================================================
@@ -332,7 +391,7 @@ def plot_metric_comparison(
         linewidth=0.8,
     )
     _set_rotated_xticklabels(ax, labels)
-    ax.set_ylabel(_metric_display_name(metric_name))
+    ax.set_ylabel(_metric_ylabel(metric_name))
     ax.set_title(title or f"{metric_name}: сравнение по сценариям")
     ax.grid(axis="y", alpha=0.25)
 
@@ -399,7 +458,7 @@ def plot_metric_boxplot(
     for patch in ax.artists:
         patch.set_alpha(0.75)
 
-    ax.set_ylabel(_metric_display_name(metric_name))
+    ax.set_ylabel(_metric_ylabel(metric_name))
     ax.set_title(title or f"{metric_name}: разброс по replication")
     ax.grid(axis="y", alpha=0.25)
 
@@ -497,8 +556,12 @@ def plot_scenario_heatmap_pi(
     im = ax.imshow(matrix, aspect="auto", interpolation="nearest")
     ax.set_yticks(np.arange(len(labels)))
     ax.set_yticklabels(labels)
-    ax.set_xticks(np.arange(len(states)))
-    ax.set_xticklabels(states)
+    n_states = len(states)
+    max_ticks = 20
+    step = max(1, math.ceil(n_states / max_ticks))
+    tick_positions = np.arange(0, n_states, step)
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels([states[idx] for idx in tick_positions], rotation=45, ha="right")
     ax.set_xlabel("Состояние k")
     ax.set_ylabel("Сценарий")
     ax.set_title("Тепловая карта pi_hat(k)")
@@ -538,12 +601,25 @@ def generate_standard_plots(
                 default_metrics.append(metric)
 
     available = set(available_metric_names(suite_data))
+    is_loss_only = _suite_is_loss_only(suite_data)
 
-    if "mean_queue_length" in available and "mean_queue_length" not in default_metrics:
+    if (
+        not is_loss_only
+        and "mean_queue_length" in available
+        and "mean_queue_length" not in default_metrics
+    ):
         default_metrics.append("mean_queue_length")
-    if "queueing_probability" in available and "queueing_probability" not in default_metrics:
+    if (
+        not is_loss_only
+        and "queueing_probability" in available
+        and "queueing_probability" not in default_metrics
+    ):
         default_metrics.append("queueing_probability")
-    if "mean_waiting_time" in available and "mean_waiting_time" not in default_metrics:
+    if (
+        not is_loss_only
+        and "mean_waiting_time" in available
+        and "mean_waiting_time" not in default_metrics
+    ):
         default_metrics.append("mean_waiting_time")
 
     for metric in default_metrics:
@@ -578,7 +654,7 @@ def generate_standard_plots(
                 "mean_service_time",
                 "mean_waiting_time",
                 "mean_sojourn_time",
-            }:
+            } and not (is_loss_only and metric in {"mean_queue_length", "mean_waiting_time"}):
                 try:
                     created.append(plot_metric_boxplot(suite_data, metric, out_dir, dpi=dpi))
                 except KeyError:
