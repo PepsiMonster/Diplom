@@ -35,6 +35,7 @@ def default_output_root() -> Path:
 
 def run_rust_full(
     release: bool,
+    scenario_family: str,
     suite_name: str,
     replications: int | None,
     max_time: float | None,
@@ -49,6 +50,7 @@ def run_rust_full(
         cmd.append("--release")
     cmd.extend(["--", "full"])
 
+    cmd.extend(["--scenario-family", scenario_family])
     cmd.extend(["--suite-name", suite_name])
     if replications is not None:
         cmd.extend(["--replications", str(replications)])
@@ -77,6 +79,12 @@ def main() -> None:
         )
     )
     parser.add_argument("--release", action="store_true", help="Запустить rust в release-режиме")
+    parser.add_argument(
+        "--scenario-family",
+        choices=["base", "workload-sensitivity", "arrival-sensitivity", "combined-sensitivity"],
+        default="base",
+        help="Какое семейство сценариев запускать",
+    )
     parser.add_argument("--suite-name", default=None, help="Опционально переопределить suite_name")
     parser.add_argument("--replications", type=int, default=None, help="Опционально переопределить replications")
     parser.add_argument("--max-time", type=float, default=None, help="Опционально переопределить max_time")
@@ -92,10 +100,12 @@ def main() -> None:
     suite_name = args.suite_name if args.suite_name else v.SUITE_NAME
     print(f"Выходная директория для результатов: {output_root}")
     print(f"Имя серии: {suite_name}")
+    print(f"Семейство сценариев: {args.scenario_family}")
 
     print("Шаг 3/3: Запускаем Rust full pipeline...")
     run_rust_full(
         release=args.release,
+        scenario_family=args.scenario_family,
         suite_name=suite_name,
         replications=args.replications,
         max_time=args.max_time,

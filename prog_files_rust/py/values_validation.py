@@ -11,6 +11,8 @@ class ExperimentValuesError(ValueError):
 
 
 _ALLOWED_ARCHITECTURES = {"loss", "buffer"}
+_ALLOWED_RATE_PROFILES = {"constant", "state_dependent"}
+_ALLOWED_WORKLOAD_FAMILY_PROFILES = {"fixed", "basic", "full"}
 
 _ALLOWED_WORKLOADS = {
     "deterministic",
@@ -28,6 +30,20 @@ _ALLOWED_ARRIVAL_PROCESSES = {
     "erlang_4",
     "hyperexp_2",
 }
+
+
+def resolve_workload_family(values_module: ModuleType) -> list[str]:
+    profile = values_module.WORKLOAD_FAMILY_PROFILE
+    if profile == "fixed":
+        return [values_module.FIXED_WORKLOAD]
+    if profile == "basic":
+        return list(values_module.WORKLOAD_FAMILY_BASIC)
+    if profile == "full":
+        return list(values_module.WORKLOAD_FAMILY_FULL)
+    raise ExperimentValuesError(
+        f"Неизвестный WORKLOAD_FAMILY_PROFILE={profile!r}; "
+        f"допустимы: {sorted(_ALLOWED_WORKLOAD_FAMILY_PROFILES)}"
+    )
 
 
 def _require(condition: bool, message: str) -> None:
@@ -98,6 +114,40 @@ def validate_experiment_values(values_module: ModuleType) -> None:
         (
             "SYSTEM_ARCHITECTURE должен быть одним из "
             f"{sorted(_ALLOWED_ARCHITECTURES)}, получено: {values_module.SYSTEM_ARCHITECTURE!r}"
+        ),
+    )
+    _require(
+        isinstance(values_module.SERVICE_SPEED_PROFILE, str)
+        and values_module.SERVICE_SPEED_PROFILE in _ALLOWED_RATE_PROFILES,
+        (
+            "SERVICE_SPEED_PROFILE должен быть одним из "
+            f"{sorted(_ALLOWED_RATE_PROFILES)}, получено: {values_module.SERVICE_SPEED_PROFILE!r}"
+        ),
+    )
+    _require(
+        isinstance(values_module.ARRIVAL_RATE_PROFILE, str)
+        and values_module.ARRIVAL_RATE_PROFILE in _ALLOWED_RATE_PROFILES,
+        (
+            "ARRIVAL_RATE_PROFILE должен быть одним из "
+            f"{sorted(_ALLOWED_RATE_PROFILES)}, получено: {values_module.ARRIVAL_RATE_PROFILE!r}"
+        ),
+    )
+    _require(
+        isinstance(values_module.WORKLOAD_FAMILY_PROFILE, str)
+        and values_module.WORKLOAD_FAMILY_PROFILE in _ALLOWED_WORKLOAD_FAMILY_PROFILES,
+        (
+            "WORKLOAD_FAMILY_PROFILE должен быть одним из "
+            f"{sorted(_ALLOWED_WORKLOAD_FAMILY_PROFILES)}, "
+            f"получено: {values_module.WORKLOAD_FAMILY_PROFILE!r}"
+        ),
+    )
+    _require(
+        isinstance(values_module.FIXED_WORKLOAD, str)
+        and values_module.FIXED_WORKLOAD in _ALLOWED_WORKLOADS,
+        (
+            "FIXED_WORKLOAD должен быть одним из "
+            f"{sorted(_ALLOWED_WORKLOADS)}, "
+            f"получено: {values_module.FIXED_WORKLOAD!r}"
         ),
     )
 
@@ -350,21 +400,22 @@ def validate_experiment_values(values_module: ModuleType) -> None:
         ),
     )
 
+    workload_family = resolve_workload_family(values_module)
     _require(
-        isinstance(values_module.WORKLOAD_FAMILY, list)
-        and len(values_module.WORKLOAD_FAMILY) > 0,
-        "WORKLOAD_FAMILY должен быть непустым списком",
+        isinstance(workload_family, list)
+        and len(workload_family) > 0,
+        "Выбранный WORKLOAD_FAMILY_PROFILE должен давать непустой workload family",
     )
     _require(
-        len(values_module.WORKLOAD_FAMILY) == len(set(values_module.WORKLOAD_FAMILY)),
-        f"WORKLOAD_FAMILY не должен содержать дубликатов, сейчас: {values_module.WORKLOAD_FAMILY!r}",
+        len(workload_family) == len(set(workload_family)),
+        f"workload family не должен содержать дубликатов, сейчас: {workload_family!r}",
     )
 
-    for i, item in enumerate(values_module.WORKLOAD_FAMILY):
+    for i, item in enumerate(workload_family):
         _require(
             item in _ALLOWED_WORKLOADS,
             (
-                f"WORKLOAD_FAMILY[{i}] имеет неизвестное значение {item!r}; "
+                f"workload_family[{i}] имеет неизвестное значение {item!r}; "
                 f"допустимы: {sorted(_ALLOWED_WORKLOADS)}"
             ),
         )
@@ -426,6 +477,53 @@ def validate_experiment_values(values_module: ModuleType) -> None:
             (
                 f"ARRIVAL_PROCESS_FAMILY[{i}] имеет неизвестное значение {item!r}; "
                 f"допустимы: {sorted(_ALLOWED_ARRIVAL_PROCESSES)}"
+            ),
+        )
+
+    _validate_probability(values_module.ARRIVAL_HYPEREXP_P, name="ARRIVAL_HYPEREXP_P")
+    _require(
+        _is_positive_number(values_module.ARRIVAL_HYPEREXP_FAST_MULTIPLIER),
+        (
+            "ARRIVAL_HYPEREXP_FAST_MULTIPLIER должен быть > 0, "
+            f"получено: {values_module.ARRIVAL_HYPEREXP_FAST_MULTIPLIER!r}"
+        ),
+    )
+
+    if "hyperexp_2" in values_module.ARRIVAL_PROCESS_FAMILY:
+        _require(
+            values_module.ARRIVAL_NORMAL_VALUE > 0.0,
+            (
+                "Для arrival HyperExp(2) требуется ARRIVAL_NORMAL_VALUE > 0, "
+                f"получено: {values_module.ARRIVAL_NORMAL_VALUE!r}"
+            ),
+        )
+        arrival_mean_interarrival = 1.0 / values_module.ARRIVAL_NORMAL_VALUE
+        arrival_rate_1 = (
+            values_module.ARRIVAL_HYPEREXP_FAST_MULTIPLIER
+            * values_module.ARRIVAL_NORMAL_VALUE
+        )
+        arrival_denominator = (
+            arrival_mean_interarrival
+            - values_module.ARRIVAL_HYPEREXP_P / arrival_rate_1
+        )
+        _require(
+            arrival_denominator > 0.0,
+            (
+                "Параметры ARRIVAL_HYPEREXP_P и "
+                "ARRIVAL_HYPEREXP_FAST_MULTIPLIER дают некорректную вторую интенсивность Arrival HyperExp(2)."
+            ),
+        )
+
+    if values_module.ARRIVAL_RATE_PROFILE == "state_dependent":
+        unsupported = [
+            p for p in values_module.ARRIVAL_PROCESS_FAMILY if p != "poisson"
+        ]
+        _require(
+            len(unsupported) == 0,
+            (
+                "Для ARRIVAL_RATE_PROFILE='state_dependent' пока поддерживается "
+                "только ARRIVAL_PROCESS_FAMILY=['poisson']; "
+                f"найдены неподдерживаемые значения: {unsupported!r}"
             ),
         )
 

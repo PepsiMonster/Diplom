@@ -11,8 +11,8 @@ use thiserror::Error;
 
 use crate::model::{AdmissionPlacement, ModelError, RejectionReason, SystemState, COMPLETION_TOL};
 use crate::params::{
-    ParamsError, ResourceDistributionConfig, ScenarioConfig, SystemArchitecture,
-    WorkloadDistributionConfig,
+    ArrivalProcessConfig, ParamsError, ResourceDistributionConfig, ScenarioConfig,
+    SystemArchitecture, WorkloadDistributionConfig,
 };
 
 #[derive(Debug, Error)]
@@ -130,9 +130,16 @@ pub struct SimulationRunResult {
     pub rejected_server: u64,
     pub rejected_resource: u64,
     pub completed_jobs: u64,
+    pub completed_time_samples: u64,
     pub loss_probability: f64,
     pub queueing_probability: f64,
     pub throughput: f64,
+    pub mean_service_time: f64,
+    pub mean_waiting_time: f64,
+    pub mean_sojourn_time: f64,
+    pub std_service_time: f64,
+    pub std_waiting_time: f64,
+    pub std_sojourn_time: f64,
     pub state_trace: Vec<StateSnapshot>,
     pub event_log: Vec<EventRecord>,
     pub animation_log: Option<AnimationLog>,
@@ -156,15 +163,27 @@ impl SimulationRunResult {
             "mean_occupied_resource".to_string(),
             json!(self.mean_occupied_resource),
         );
-        summary.insert("mean_queue_length".to_string(), json!(self.mean_queue_length));
-        summary.insert("mean_waiting_jobs".to_string(), json!(self.mean_waiting_jobs));
+        summary.insert(
+            "mean_queue_length".to_string(),
+            json!(self.mean_queue_length),
+        );
+        summary.insert(
+            "mean_waiting_jobs".to_string(),
+            json!(self.mean_waiting_jobs),
+        );
         summary.insert("arrival_attempts".to_string(), json!(self.arrival_attempts));
         summary.insert(
             "accepted_arrivals".to_string(),
             json!(self.accepted_arrivals),
         );
-        summary.insert("accepted_to_queue".to_string(), json!(self.accepted_to_queue));
-        summary.insert("started_from_queue".to_string(), json!(self.started_from_queue));
+        summary.insert(
+            "accepted_to_queue".to_string(),
+            json!(self.accepted_to_queue),
+        );
+        summary.insert(
+            "started_from_queue".to_string(),
+            json!(self.started_from_queue),
+        );
         summary.insert(
             "rejected_arrivals".to_string(),
             json!(self.rejected_arrivals),
@@ -179,12 +198,31 @@ impl SimulationRunResult {
             json!(self.rejected_resource),
         );
         summary.insert("completed_jobs".to_string(), json!(self.completed_jobs));
+        summary.insert(
+            "completed_time_samples".to_string(),
+            json!(self.completed_time_samples),
+        );
         summary.insert("loss_probability".to_string(), json!(self.loss_probability));
         summary.insert(
             "queueing_probability".to_string(),
             json!(self.queueing_probability),
         );
         summary.insert("throughput".to_string(), json!(self.throughput));
+        summary.insert(
+            "mean_service_time".to_string(),
+            json!(self.mean_service_time),
+        );
+        summary.insert(
+            "mean_waiting_time".to_string(),
+            json!(self.mean_waiting_time),
+        );
+        summary.insert(
+            "mean_sojourn_time".to_string(),
+            json!(self.mean_sojourn_time),
+        );
+        summary.insert("std_service_time".to_string(), json!(self.std_service_time));
+        summary.insert("std_waiting_time".to_string(), json!(self.std_waiting_time));
+        summary.insert("std_sojourn_time".to_string(), json!(self.std_sojourn_time));
 
         for (k, value) in self.pi_hat.iter().enumerate() {
             summary.insert(format!("pi_hat_{k}"), json!(value));
@@ -293,12 +331,59 @@ pub fn sample_next_arrival_delta(
         return Ok(INFINITY);
     }
 
-    let dist = Exp::new(current_rate).map_err(|e| {
-        SimulationError::Validation(format!(
-            "Не удалось создать Exp(rate={current_rate}) для следующего поступления: {e}"
-        ))
-    })?;
-    Ok(dist.sample(rng))
+    match &scenario.arrival_process {
+        ArrivalProcessConfig::Poisson => {
+            let dist = Exp::new(current_rate).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Exp(rate={current_rate}) для следующего поступления: {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
+        }
+        ArrivalProcessConfig::Erlang { order } => {
+            if *order == 0 {
+                return Err(SimulationError::Validation(
+                    "arrival erlang order должен быть > 0".to_string(),
+                ));
+            }
+            let shape = *order as f64;
+            let scale = 1.0 / (shape * current_rate);
+            let dist = Gamma::new(shape, scale).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Gamma(shape={shape}, scale={scale}) для Erlang arrival: {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
+        }
+        ArrivalProcessConfig::Hyperexponential2 {
+            p,
+            fast_rate_multiplier,
+        } => {
+            let p = *p;
+            let fast_rate_multiplier = *fast_rate_multiplier;
+            if !(0.0 < p && p < 1.0) || fast_rate_multiplier <= 0.0 {
+                return Err(SimulationError::Validation(
+                    "Некорректные параметры arrival HyperExp(2)".to_string(),
+                ));
+            }
+            let rate_1 = fast_rate_multiplier * current_rate;
+            let target_mean = 1.0 / current_rate;
+            let denominator = target_mean - p / rate_1;
+            if denominator <= 0.0 {
+                return Err(SimulationError::Validation(
+                    "Некорректные параметры arrival HyperExp(2): невозможно подобрать вторую интенсивность".to_string(),
+                ));
+            }
+            let rate_2 = (1.0 - p) / denominator;
+            let rate = if rng.gen_bool(p) { rate_1 } else { rate_2 };
+            let dist = Exp::new(rate).map_err(|e| {
+                SimulationError::Validation(format!(
+                    "Не удалось создать Exp(rate={rate}) для arrival HyperExp(2): {e}"
+                ))
+            })?;
+            Ok(dist.sample(rng))
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -318,6 +403,13 @@ pub struct StatisticsAccumulator {
     pub rejected_server: u64,
     pub rejected_resource: u64,
     pub completed_jobs: u64,
+    pub completed_service_time_sum: f64,
+    pub completed_service_time_sq_sum: f64,
+    pub completed_waiting_time_sum: f64,
+    pub completed_waiting_time_sq_sum: f64,
+    pub completed_sojourn_time_sum: f64,
+    pub completed_sojourn_time_sq_sum: f64,
+    pub completed_time_samples: u64,
 }
 
 impl StatisticsAccumulator {
@@ -342,6 +434,13 @@ impl StatisticsAccumulator {
             rejected_server: 0,
             rejected_resource: 0,
             completed_jobs: 0,
+            completed_service_time_sum: 0.0,
+            completed_service_time_sq_sum: 0.0,
+            completed_waiting_time_sum: 0.0,
+            completed_waiting_time_sq_sum: 0.0,
+            completed_sojourn_time_sum: 0.0,
+            completed_sojourn_time_sq_sum: 0.0,
+            completed_time_samples: 0,
         })
     }
 
@@ -428,6 +527,29 @@ impl StatisticsAccumulator {
         }
     }
 
+    pub fn register_completed_job_times(
+        &mut self,
+        departure_time: f64,
+        arrival_time: f64,
+        service_start_time: f64,
+    ) {
+        if !self.is_in_observation_window(departure_time) {
+            return;
+        }
+
+        let service_time = (departure_time - service_start_time).max(0.0);
+        let waiting_time = (service_start_time - arrival_time).max(0.0);
+        let sojourn_time = (departure_time - arrival_time).max(0.0);
+
+        self.completed_service_time_sum += service_time;
+        self.completed_service_time_sq_sum += service_time * service_time;
+        self.completed_waiting_time_sum += waiting_time;
+        self.completed_waiting_time_sq_sum += waiting_time * waiting_time;
+        self.completed_sojourn_time_sum += sojourn_time;
+        self.completed_sojourn_time_sq_sum += sojourn_time * sojourn_time;
+        self.completed_time_samples += 1;
+    }
+
     pub fn build_result(
         self,
         scenario_name: String,
@@ -470,6 +592,43 @@ impl StatisticsAccumulator {
             0.0
         };
         let throughput = self.completed_jobs as f64 / observed_time;
+        let n = self.completed_time_samples as f64;
+        let safe_std = |sum: f64, sum_sq: f64| -> f64 {
+            if n <= 0.0 {
+                0.0
+            } else {
+                let mean = sum / n;
+                let var = (sum_sq / n) - mean * mean;
+                var.max(0.0).sqrt()
+            }
+        };
+        let mean_service_time = if n > 0.0 {
+            self.completed_service_time_sum / n
+        } else {
+            0.0
+        };
+        let mean_waiting_time = if n > 0.0 {
+            self.completed_waiting_time_sum / n
+        } else {
+            0.0
+        };
+        let mean_sojourn_time = if n > 0.0 {
+            self.completed_sojourn_time_sum / n
+        } else {
+            0.0
+        };
+        let std_service_time = safe_std(
+            self.completed_service_time_sum,
+            self.completed_service_time_sq_sum,
+        );
+        let std_waiting_time = safe_std(
+            self.completed_waiting_time_sum,
+            self.completed_waiting_time_sq_sum,
+        );
+        let std_sojourn_time = safe_std(
+            self.completed_sojourn_time_sum,
+            self.completed_sojourn_time_sq_sum,
+        );
 
         Ok(SimulationRunResult {
             scenario_name,
@@ -493,9 +652,16 @@ impl StatisticsAccumulator {
             rejected_server: self.rejected_server,
             rejected_resource: self.rejected_resource,
             completed_jobs: self.completed_jobs,
+            completed_time_samples: self.completed_time_samples,
             loss_probability,
             queueing_probability,
             throughput,
+            mean_service_time,
+            mean_waiting_time,
+            mean_sojourn_time,
+            std_service_time,
+            std_waiting_time,
+            std_sojourn_time,
             state_trace,
             event_log,
             animation_log,
@@ -598,10 +764,8 @@ impl SingleRunSimulator {
     fn sample_new_job_parameters(&mut self) -> Result<(u32, f64)> {
         let resource_demand =
             sample_resource_demand(&mut self.rng, &self.scenario.resource_distribution)?;
-            """
-            Распределение W работы задается
-            Получается распределение T = W/sigma_k
-            """
+        // Распределение W работы задается workload_distribution.
+        // Далее фактическое время обслуживания формируется как T = W / sigma_k.
         let workload = sample_workload(&mut self.rng, &self.scenario.workload_distribution)?;
         Ok((resource_demand, workload))
     }
@@ -638,9 +802,9 @@ impl SingleRunSimulator {
 
         let (resource_demand, workload) = self.sample_new_job_parameters()?;
         self.stats.register_arrival_attempt(self.state.current_time);
-        let job = self
-            .state
-            .create_job(resource_demand, workload, Some(self.state.current_time))?;
+        let job =
+            self.state
+                .create_job(resource_demand, workload, Some(self.state.current_time))?;
         let job_id = job.job_id;
         let should_record = self.should_record_animation_job();
         self.processed_job_count += 1;
@@ -678,7 +842,8 @@ impl SingleRunSimulator {
                     lane_id: None,
                     reject_reason: Some(decision.reason.as_str().to_string()),
                 };
-                self.animation_job_index.insert(job_id, self.animation_jobs.len());
+                self.animation_job_index
+                    .insert(job_id, self.animation_jobs.len());
                 self.animation_jobs.push(rec);
             }
             self.record_state_snapshot();
@@ -687,10 +852,15 @@ impl SingleRunSimulator {
 
         let placement = self.state.admit_or_enqueue(job, &self.scenario)?;
         let queued = matches!(placement, AdmissionPlacement::Queued);
-        self.stats.register_admission(self.state.current_time, queued);
+        self.stats
+            .register_admission(self.state.current_time, queued);
 
         if should_record {
-            let lane_id = if queued { None } else { self.allocate_lane(job_id) };
+            let lane_id = if queued {
+                None
+            } else {
+                self.allocate_lane(job_id)
+            };
             let rec = AnimationJobRecord {
                 job_id,
                 arrival_time: self.state.current_time,
@@ -714,7 +884,8 @@ impl SingleRunSimulator {
                 lane_id,
                 reject_reason: None,
             };
-            self.animation_job_index.insert(job_id, self.animation_jobs.len());
+            self.animation_job_index
+                .insert(job_id, self.animation_jobs.len());
             self.animation_jobs.push(rec);
         } else if !queued {
             let _ = self.allocate_lane(job_id);
@@ -756,6 +927,17 @@ impl SingleRunSimulator {
             let removed_job = self.state.remove_job(job_id)?;
             self.lane_by_job.remove(&removed_job.job_id);
             self.stats.register_departure(self.state.current_time);
+            let service_start_time = removed_job.service_start_time.ok_or_else(|| {
+                SimulationError::Validation(format!(
+                    "У завершившейся заявки job_id={} отсутствует service_start_time",
+                    removed_job.job_id
+                ))
+            })?;
+            self.stats.register_completed_job_times(
+                self.state.current_time,
+                removed_job.arrival_time,
+                service_start_time,
+            );
             self.update_animation_job(removed_job.job_id, |r| {
                 r.service_end_time = Some(now);
             });
@@ -776,7 +958,8 @@ impl SingleRunSimulator {
             let promoted_job_ids = self.state.promote_from_queue(&self.scenario);
             if !promoted_job_ids.is_empty() {
                 for promoted_job_id in &promoted_job_ids {
-                    self.stats.register_started_from_queue(self.state.current_time);
+                    self.stats
+                        .register_started_from_queue(self.state.current_time);
                     let lane = self.allocate_lane(*promoted_job_id);
                     let now = self.state.current_time;
                     self.update_animation_job(*promoted_job_id, |r| {
@@ -988,6 +1171,10 @@ pub fn print_run_summary(result: &SimulationRunResult) {
         result.completed_jobs
     );
     println!(
+        "Сэмплов job-time в окне:            {}",
+        result.completed_time_samples
+    );
+    println!(
         "Вероятность отказа:                {:.6}",
         result.loss_probability
     );
@@ -998,6 +1185,30 @@ pub fn print_run_summary(result: &SimulationRunResult) {
     println!(
         "Эффективная пропускная способность:{:.6}",
         result.throughput
+    );
+    println!(
+        "Среднее время обслуживания:         {:.6}",
+        result.mean_service_time
+    );
+    println!(
+        "Среднее время ожидания:             {:.6}",
+        result.mean_waiting_time
+    );
+    println!(
+        "Среднее время пребывания:           {:.6}",
+        result.mean_sojourn_time
+    );
+    println!(
+        "Std времени обслуживания:           {:.6}",
+        result.std_service_time
+    );
+    println!(
+        "Std времени ожидания:               {:.6}",
+        result.std_waiting_time
+    );
+    println!(
+        "Std времени пребывания:             {:.6}",
+        result.std_sojourn_time
     );
     println!("{}", "-".repeat(90));
     println!("Оценка стационарного распределения pi_hat(k):");
@@ -1013,7 +1224,7 @@ mod tests {
     use super::*;
     use crate::params::{
         build_base_scenario_from_values, load_default_external_experiment_values,
-        standard_workload_family_from_values,
+        standard_workload_family_from_values, ArrivalProcessConfig,
     };
 
     #[test]
@@ -1037,6 +1248,7 @@ mod tests {
         let mut scenario = build_base_scenario_from_values(
             &values,
             workloads.get("exponential").unwrap().clone(),
+            ArrivalProcessConfig::Poisson,
             "_smoke",
         )
         .unwrap();
@@ -1049,7 +1261,7 @@ mod tests {
         let result = simulate_one_run(scenario, 0, Some(12345)).unwrap();
 
         assert!(result.observed_time > 0.0);
-        assert_eq!(result.pi_hat.len(), 21);
+        assert_eq!(result.pi_hat.len(), values.capacity_k + 1);
         assert!(result.loss_probability >= 0.0);
         assert!(result.loss_probability <= 1.0);
     }
