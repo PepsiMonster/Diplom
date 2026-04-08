@@ -17,7 +17,7 @@
 *.run.xml
 
 # Прочие, временно?
-# Program_files/
+Program_files/
 *.pdf
 !tex/main.pdf
 /program_files_test.zip
