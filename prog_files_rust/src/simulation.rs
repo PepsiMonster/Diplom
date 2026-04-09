@@ -4,7 +4,6 @@ use std::f64::INFINITY;
 use rand::distributions::{Distribution as RandDistribution, WeightedIndex};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use rand_distr::{Exp, Gamma};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -14,6 +13,208 @@ use crate::params::{
     ArrivalProcessConfig, ParamsError, ResourceDistributionConfig, ScenarioConfig,
     SystemArchitecture, WorkloadDistributionConfig,
 };
+
+#[derive(Debug, Clone)]
+enum ResourceSampler {
+    Deterministic(u32),
+    DiscreteUniform {
+        min_units: u32,
+        max_units: u32,
+    },
+    DiscreteCustom {
+        values: Vec<u32>,
+        dist: WeightedIndex<f64>,
+    },
+}
+
+impl ResourceSampler {
+    fn from_config(config: &ResourceDistributionConfig) -> Result<Self> {
+        config.validate()?;
+        match config {
+            ResourceDistributionConfig::Deterministic {
+                deterministic_value,
+            } => Ok(Self::Deterministic(*deterministic_value)),
+            ResourceDistributionConfig::DiscreteUniform {
+                min_units,
+                max_units,
+            } => Ok(Self::DiscreteUniform {
+                min_units: *min_units,
+                max_units: *max_units,
+            }),
+            ResourceDistributionConfig::DiscreteCustom {
+                values,
+                probabilities,
+            } => {
+                let dist = WeightedIndex::new(probabilities).map_err(|e| {
+                    SimulationError::Validation(format!(
+                        "Некорректные probabilities для discrete_custom: {e}"
+                    ))
+                })?;
+                Ok(Self::DiscreteCustom {
+                    values: values.clone(),
+                    dist,
+                })
+            }
+        }
+    }
+
+    fn sample(&self, rng: &mut StdRng) -> u32 {
+        match self {
+            Self::Deterministic(v) => *v,
+            Self::DiscreteUniform {
+                min_units,
+                max_units,
+            } => rng.gen_range(*min_units..=*max_units),
+            Self::DiscreteCustom { values, dist } => values[dist.sample(rng)],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum WorkloadSampler {
+    Deterministic {
+        mean: f64,
+    },
+    Exponential {
+        rate: f64,
+    },
+    Erlang {
+        order: usize,
+        rate: f64,
+    },
+    Hyperexponential2 {
+        hyper_p: f64,
+        rate_0: f64,
+        rate_1: f64,
+    },
+}
+
+impl WorkloadSampler {
+    fn from_config(config: &WorkloadDistributionConfig) -> Result<Self> {
+        config.validate()?;
+        match config {
+            WorkloadDistributionConfig::Deterministic { mean, .. } => {
+                Ok(Self::Deterministic { mean: *mean })
+            }
+            WorkloadDistributionConfig::Exponential { mean, .. } => {
+                Ok(Self::Exponential { rate: 1.0 / *mean })
+            }
+            WorkloadDistributionConfig::Erlang {
+                mean, erlang_order, ..
+            } => {
+                let order = *erlang_order;
+                Ok(Self::Erlang {
+                    order,
+                    rate: (order as f64) / *mean,
+                })
+            }
+            WorkloadDistributionConfig::Hyperexponential2 {
+                hyper_p,
+                hyper_rates,
+                ..
+            } => Ok(Self::Hyperexponential2 {
+                hyper_p: *hyper_p,
+                rate_0: hyper_rates[0],
+                rate_1: hyper_rates[1],
+            }),
+        }
+    }
+
+    fn sample(&self, rng: &mut StdRng) -> f64 {
+        match self {
+            Self::Deterministic { mean } => *mean,
+            Self::Exponential { rate } => sample_exponential(rng, *rate),
+            Self::Erlang { order, rate } => {
+                let mut sum = 0.0;
+                for _ in 0..*order {
+                    sum += sample_exponential(rng, *rate);
+                }
+                sum
+            }
+            Self::Hyperexponential2 {
+                hyper_p,
+                rate_0,
+                rate_1,
+            } => {
+                let rate = if rng.gen_bool(*hyper_p) {
+                    *rate_0
+                } else {
+                    *rate_1
+                };
+                sample_exponential(rng, rate)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ArrivalSampler {
+    Poisson,
+    Erlang { order: usize },
+    Hyperexponential2 { p: f64, fast_rate_multiplier: f64 },
+}
+
+impl ArrivalSampler {
+    fn from_config(config: &ArrivalProcessConfig) -> Result<Self> {
+        config.validate()?;
+        match config {
+            ArrivalProcessConfig::Poisson => Ok(Self::Poisson),
+            ArrivalProcessConfig::Erlang { order } => Ok(Self::Erlang { order: *order }),
+            ArrivalProcessConfig::Hyperexponential2 {
+                p,
+                fast_rate_multiplier,
+            } => Ok(Self::Hyperexponential2 {
+                p: *p,
+                fast_rate_multiplier: *fast_rate_multiplier,
+            }),
+        }
+    }
+
+    fn sample_delta(&self, rng: &mut StdRng, rate: f64) -> Result<f64> {
+        if rate <= 0.0 {
+            return Ok(INFINITY);
+        }
+
+        match self {
+            Self::Poisson => Ok(sample_exponential(rng, rate)),
+            Self::Erlang { order } => {
+                if *order == 0 {
+                    return Err(SimulationError::Validation(
+                        "arrival erlang order должен быть > 0".to_string(),
+                    ));
+                }
+                let erlang_rate = (*order as f64) * rate;
+                let mut sum = 0.0;
+                for _ in 0..*order {
+                    sum += sample_exponential(rng, erlang_rate);
+                }
+                Ok(sum)
+            }
+            Self::Hyperexponential2 {
+                p,
+                fast_rate_multiplier,
+            } => {
+                let rate_1 = *fast_rate_multiplier * rate;
+                let target_mean = 1.0 / rate;
+                let denominator = target_mean - *p / rate_1;
+                if denominator <= 0.0 {
+                    return Err(SimulationError::Validation(
+                        "Некорректные параметры arrival HyperExp(2): невозможно подобрать вторую интенсивность".to_string(),
+                    ));
+                }
+                let rate_2 = (1.0 - *p) / denominator;
+                let sample_rate = if rng.gen_bool(*p) { rate_1 } else { rate_2 };
+                Ok(sample_exponential(rng, sample_rate))
+            }
+        }
+    }
+}
+
+fn sample_exponential(rng: &mut StdRng, rate: f64) -> f64 {
+    debug_assert!(rate > 0.0);
+    let u = 1.0 - rng.gen::<f64>();
+    -u.ln() / rate
+}
 
 #[derive(Debug, Error)]
 pub enum SimulationError {
@@ -278,26 +479,19 @@ pub fn sample_workload(rng: &mut StdRng, config: &WorkloadDistributionConfig) ->
         WorkloadDistributionConfig::Deterministic { mean, .. } => Ok(*mean),
 
         WorkloadDistributionConfig::Exponential { mean, .. } => {
-            let rate = 1.0 / *mean;
-            let dist = Exp::new(rate).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Exp(rate={rate}) для workload: {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
+            Ok(sample_exponential(rng, 1.0 / *mean))
         }
 
         WorkloadDistributionConfig::Erlang {
             mean, erlang_order, ..
         } => {
-            let shape = *erlang_order as f64;
-            let scale = *mean / shape;
-            let dist = Gamma::new(shape, scale).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Gamma(shape={shape}, scale={scale}) для Erlang: {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
+            let order = *erlang_order;
+            let rate = (order as f64) / *mean;
+            let mut sum = 0.0;
+            for _ in 0..order {
+                sum += sample_exponential(rng, rate);
+            }
+            Ok(sum)
         }
 
         WorkloadDistributionConfig::Hyperexponential2 {
@@ -311,12 +505,7 @@ pub fn sample_workload(rng: &mut StdRng, config: &WorkloadDistributionConfig) ->
             } else {
                 hyper_rates[1]
             };
-            let dist = Exp::new(rate).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Exp(rate={rate}) для HyperExp(2): {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
+            Ok(sample_exponential(rng, rate))
         }
     }
 }
@@ -332,28 +521,19 @@ pub fn sample_next_arrival_delta(
     }
 
     match &scenario.arrival_process {
-        ArrivalProcessConfig::Poisson => {
-            let dist = Exp::new(current_rate).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Exp(rate={current_rate}) для следующего поступления: {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
-        }
+        ArrivalProcessConfig::Poisson => Ok(sample_exponential(rng, current_rate)),
         ArrivalProcessConfig::Erlang { order } => {
             if *order == 0 {
                 return Err(SimulationError::Validation(
                     "arrival erlang order должен быть > 0".to_string(),
                 ));
             }
-            let shape = *order as f64;
-            let scale = 1.0 / (shape * current_rate);
-            let dist = Gamma::new(shape, scale).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Gamma(shape={shape}, scale={scale}) для Erlang arrival: {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
+            let erlang_rate = (*order as f64) * current_rate;
+            let mut sum = 0.0;
+            for _ in 0..*order {
+                sum += sample_exponential(rng, erlang_rate);
+            }
+            Ok(sum)
         }
         ArrivalProcessConfig::Hyperexponential2 {
             p,
@@ -376,12 +556,7 @@ pub fn sample_next_arrival_delta(
             }
             let rate_2 = (1.0 - p) / denominator;
             let rate = if rng.gen_bool(p) { rate_1 } else { rate_2 };
-            let dist = Exp::new(rate).map_err(|e| {
-                SimulationError::Validation(format!(
-                    "Не удалось создать Exp(rate={rate}) для arrival HyperExp(2): {e}"
-                ))
-            })?;
-            Ok(dist.sample(rng))
+            Ok(sample_exponential(rng, rate))
         }
     }
 }
@@ -679,10 +854,15 @@ pub struct SingleRunSimulator {
     pub stats: StatisticsAccumulator,
     pub state_trace: Vec<StateSnapshot>,
     pub event_log: Vec<EventRecord>,
+    animation_enabled: bool,
+    free_lanes: Vec<usize>,
     pub lane_by_job: HashMap<u64, usize>,
     pub animation_jobs: Vec<AnimationJobRecord>,
     pub animation_job_index: HashMap<u64, usize>,
     pub processed_job_count: usize,
+    resource_sampler: ResourceSampler,
+    workload_sampler: WorkloadSampler,
+    arrival_sampler: ArrivalSampler,
 }
 
 impl SingleRunSimulator {
@@ -692,6 +872,11 @@ impl SingleRunSimulator {
         seed: Option<u64>,
     ) -> Result<Self> {
         scenario.validate()?;
+        let animation_enabled = scenario.simulation.animation_log_max_jobs > 0;
+        let servers_n = scenario.servers_n;
+        let resource_sampler = ResourceSampler::from_config(&scenario.resource_distribution)?;
+        let workload_sampler = WorkloadSampler::from_config(&scenario.workload_distribution)?;
+        let arrival_sampler = ArrivalSampler::from_config(&scenario.arrival_process)?;
 
         let actual_seed =
             seed.unwrap_or_else(|| derive_run_seed(scenario.simulation.seed, replication_index));
@@ -709,10 +894,19 @@ impl SingleRunSimulator {
             state: SystemState::new(),
             state_trace: Vec::new(),
             event_log: Vec::new(),
+            animation_enabled,
+            free_lanes: if animation_enabled {
+                (0..servers_n).rev().collect()
+            } else {
+                Vec::new()
+            },
             lane_by_job: HashMap::new(),
             animation_jobs: Vec::new(),
             animation_job_index: HashMap::new(),
             processed_job_count: 0,
+            resource_sampler,
+            workload_sampler,
+            arrival_sampler,
         };
 
         simulator.record_state_snapshot();
@@ -762,27 +956,32 @@ impl SingleRunSimulator {
     }
 
     fn sample_new_job_parameters(&mut self) -> Result<(u32, f64)> {
-        let resource_demand =
-            sample_resource_demand(&mut self.rng, &self.scenario.resource_distribution)?;
-        // Распределение W работы задается workload_distribution.
-        // Далее фактическое время обслуживания формируется как T = W / sigma_k.
-        let workload = sample_workload(&mut self.rng, &self.scenario.workload_distribution)?;
+        let resource_demand = self.resource_sampler.sample(&mut self.rng);
+        let workload = self.workload_sampler.sample(&mut self.rng);
         Ok((resource_demand, workload))
     }
 
     fn should_record_animation_job(&self) -> bool {
         let limit = self.scenario.simulation.animation_log_max_jobs;
-        limit > 0 && self.processed_job_count < limit
+        self.animation_enabled && self.processed_job_count < limit
     }
 
     fn allocate_lane(&mut self, job_id: u64) -> Option<usize> {
-        for lane in 0..self.scenario.servers_n {
-            if !self.lane_by_job.values().any(|&v| v == lane) {
-                self.lane_by_job.insert(job_id, lane);
-                return Some(lane);
-            }
+        if !self.animation_enabled {
+            return None;
         }
-        None
+        let lane = self.free_lanes.pop()?;
+        self.lane_by_job.insert(job_id, lane);
+        Some(lane)
+    }
+
+    fn release_lane(&mut self, job_id: u64) {
+        if !self.animation_enabled {
+            return;
+        }
+        if let Some(lane) = self.lane_by_job.remove(&job_id) {
+            self.free_lanes.push(lane);
+        }
     }
 
     fn update_animation_job<F>(&mut self, job_id: u64, mut f: F)
@@ -809,7 +1008,9 @@ impl SingleRunSimulator {
         let should_record = self.should_record_animation_job();
         self.processed_job_count += 1;
 
-        let decision = self.state.can_admit_job(resource_demand, &self.scenario)?;
+        let decision = self
+            .state
+            .can_admit_job_fast(resource_demand, &self.scenario);
 
         if !decision.accepted {
             self.stats
@@ -887,8 +1088,6 @@ impl SingleRunSimulator {
             self.animation_job_index
                 .insert(job_id, self.animation_jobs.len());
             self.animation_jobs.push(rec);
-        } else if !queued {
-            let _ = self.allocate_lane(job_id);
         }
 
         let event_type = if queued {
@@ -925,7 +1124,7 @@ impl SingleRunSimulator {
             let now = self.state.current_time;
 
             let removed_job = self.state.remove_job(job_id)?;
-            self.lane_by_job.remove(&removed_job.job_id);
+            self.release_lane(removed_job.job_id);
             self.stats.register_departure(self.state.current_time);
             let service_start_time = removed_job.service_start_time.ok_or_else(|| {
                 SimulationError::Validation(format!(
@@ -990,9 +1189,12 @@ impl SingleRunSimulator {
         while self.state.current_time < max_time - eps {
             let t0 = self.state.current_time;
 
-            let arrival_dt = sample_next_arrival_delta(&mut self.rng, &self.state, &self.scenario)?;
+            let arrival_dt = self.arrival_sampler.sample_delta(
+                &mut self.rng,
+                self.state.current_arrival_rate(&self.scenario),
+            )?;
             let (next_departure_job_id, departure_dt) =
-                self.state.next_completion(&self.scenario)?;
+                self.state.next_completion_fast(&self.scenario);
             let next_event_dt = arrival_dt.min(departure_dt);
 
             if next_event_dt == INFINITY {
@@ -1005,7 +1207,7 @@ impl SingleRunSimulator {
                     self.state.occupied_resource(),
                 )?;
                 self.state
-                    .advance_time_and_service(t1 - t0, &self.scenario)?;
+                    .advance_time_and_service_fast(t1 - t0, &self.scenario);
                 self.record_state_snapshot();
                 break;
             }
@@ -1032,7 +1234,7 @@ impl SingleRunSimulator {
                     self.state.occupied_resource(),
                 )?;
                 self.state
-                    .advance_time_and_service(t1 - t0, &self.scenario)?;
+                    .advance_time_and_service_fast(t1 - t0, &self.scenario);
                 self.record_state_snapshot();
                 break;
             }
@@ -1047,7 +1249,7 @@ impl SingleRunSimulator {
             )?;
 
             self.state
-                .advance_time_and_service(next_event_dt, &self.scenario)?;
+                .advance_time_and_service_fast(next_event_dt, &self.scenario);
 
             if departure_dt < arrival_dt - eps {
                 self.process_departures()?;
@@ -1061,7 +1263,7 @@ impl SingleRunSimulator {
             }
         }
 
-        let animation_log = if self.scenario.simulation.animation_log_max_jobs > 0 {
+        let animation_log = if self.animation_enabled {
             Some(AnimationLog {
                 meta: AnimationLogMeta {
                     system_architecture: match self.scenario.system_architecture {

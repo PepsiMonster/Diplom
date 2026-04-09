@@ -881,11 +881,15 @@ pub fn build_fixed_arrival_process_from_values(
 ) -> Result<ArrivalProcessConfig> {
     let family = standard_arrival_process_family_from_values(values)?;
     if values.arrival_process_family.len() == 1 {
-        return family.into_iter().next().map(|(_, cfg)| cfg).ok_or_else(|| {
-            ParamsError::Validation(
-                "Не удалось построить фиксированный arrival process".to_string(),
-            )
-        });
+        return family
+            .into_iter()
+            .next()
+            .map(|(_, cfg)| cfg)
+            .ok_or_else(|| {
+                ParamsError::Validation(
+                    "Не удалось построить фиксированный arrival process".to_string(),
+                )
+            });
     }
 
     if let Some(cfg) = family.get("poisson") {
