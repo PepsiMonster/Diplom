@@ -246,12 +246,36 @@ fn short_profile(value: &str) -> &str {
     }
 }
 
-fn profile_slug(values: &ExternalExperimentValues) -> String {
+fn fixed_arrival_process_key(values: &ExternalExperimentValues) -> String {
+    if values.arrival_process_family.len() == 1 {
+        return values.arrival_process_family[0].clone();
+    }
+    if values
+        .arrival_process_family
+        .iter()
+        .any(|item| item == "poisson")
+    {
+        return "poisson".to_string();
+    }
+    "unspecified".to_string()
+}
+
+fn effective_workload_slug(
+    values: &ExternalExperimentValues,
+    scenario_family: ScenarioFamily,
+) -> String {
+    match scenario_family {
+        ScenarioFamily::ArrivalSensitivity => format!("fixed-{}", values.fixed_workload),
+        _ => values.workload_family_profile.clone(),
+    }
+}
+
+fn profile_slug(values: &ExternalExperimentValues, scenario_family: ScenarioFamily) -> String {
     format!(
         "arrprof-{}__srvprof-{}__work-{}",
         short_profile(&values.arrival_rate_profile),
         short_profile(&values.service_speed_profile),
-        values.workload_family_profile
+        effective_workload_slug(values, scenario_family)
     )
 }
 
@@ -271,8 +295,35 @@ fn output_series_slug(
     format!(
         "sf-{}__{}",
         scenario_family_slug(scenario_family),
-        profile_slug(values)
+        profile_slug(values, scenario_family)
     )
+}
+
+fn profile_summary(values: &ExternalExperimentValues, scenario_family: ScenarioFamily) -> String {
+    match scenario_family {
+        ScenarioFamily::WorkloadSensitivity => format!(
+            "arrival_rate={}, service_speed={}, workload_family={}, fixed_arrival_process={}",
+            values.arrival_rate_profile,
+            values.service_speed_profile,
+            values.workload_family_profile,
+            fixed_arrival_process_key(values)
+        ),
+        ScenarioFamily::ArrivalSensitivity => format!(
+            "arrival_rate={}, service_speed={}, workload=fixed:{}",
+            values.arrival_rate_profile, values.service_speed_profile, values.fixed_workload
+        ),
+        ScenarioFamily::CombinedSensitivity => format!(
+            "arrival_rate={}, service_speed={}, workload_family={}, arrival_process_family={:?}",
+            values.arrival_rate_profile,
+            values.service_speed_profile,
+            values.workload_family_profile,
+            values.arrival_process_family
+        ),
+        ScenarioFamily::Base => format!(
+            "arrival_rate={}, service_speed={}, workload=fixed:{}",
+            values.arrival_rate_profile, values.service_speed_profile, values.fixed_workload
+        ),
+    }
 }
 
 fn scenario_family_summary(
@@ -811,11 +862,8 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
     let values = load_default_external_experiment_values()?;
     let keep_full_run_results = args.keep_full_run_results || values.keep_full_run_results;
     println!(
-        "Профили из конфига: arrival_rate={}, service_speed={}, workload_family_profile={}, fixed_workload={}",
-        values.arrival_rate_profile,
-        values.service_speed_profile,
-        values.workload_family_profile,
-        values.fixed_workload
+        "Профили запуска: {}",
+        profile_summary(&values, args.scenario_family)
     );
     println!(
         "Семейство сценариев: {}",
@@ -837,10 +885,8 @@ pub fn run_suite_mode(args: &SuiteArgs) -> Result<PathBuf> {
     )?;
     let suite_dir = save_experiment_suite(&suite_result, &output_root)?;
     let suite_text = format!(
-        "Профили запуска: arrival_rate={}, service_speed={}, workload_family={}\nСемейство сценариев: {:?}\n\n{}",
-        values.arrival_rate_profile,
-        values.service_speed_profile,
-        values.workload_family_profile,
+        "Профили запуска: {}\nСемейство сценариев: {:?}\n\n{}",
+        profile_summary(&values, args.scenario_family),
         args.scenario_family,
         render_suite_summary_text(&suite_result)
     );
@@ -892,11 +938,8 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     let values = load_default_external_experiment_values()?;
     let keep_full_run_results = args.keep_full_run_results || values.keep_full_run_results;
     println!(
-        "Профили из конфига: arrival_rate={}, service_speed={}, workload_family_profile={}, fixed_workload={}",
-        values.arrival_rate_profile,
-        values.service_speed_profile,
-        values.workload_family_profile,
-        values.fixed_workload
+        "Профили запуска: {}",
+        profile_summary(&values, args.scenario_family)
     );
     println!(
         "Семейство сценариев: {}",
@@ -919,10 +962,8 @@ pub fn run_full_mode(args: &FullArgs) -> Result<PathBuf> {
     let suite_dir = save_experiment_suite(&suite_result, &suite_dir)?;
 
     let suite_text = format!(
-        "Профили запуска: arrival_rate={}, service_speed={}, workload_family={}\nСемейство сценариев: {:?}\n\n{}",
-        values.arrival_rate_profile,
-        values.service_speed_profile,
-        values.workload_family_profile,
+        "Профили запуска: {}\nСемейство сценариев: {:?}\n\n{}",
+        profile_summary(&values, args.scenario_family),
         args.scenario_family,
         render_suite_summary_text(&suite_result)
     );
