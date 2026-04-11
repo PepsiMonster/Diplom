@@ -25,3 +25,5 @@ Program_files/
 __pycache__/
 *.pyc
 *.pyo
+legacy/
+*.zip

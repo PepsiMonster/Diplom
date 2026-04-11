@@ -1,0 +1,61 @@
+{
+  "suite_name": "baseline_gpu",
+  "replications": 20,
+  "max_time": 50000.0,
+  "warmup_time": 5000.0,
+  "base_seed": 42,
+  "servers_n": 96,
+  "total_resource_r": 590,
+  "arrival_rate_levels": [
+    70.0,
+    82.2,
+    90.0
+  ],
+  "service_speed_levels": [
+    1.2
+  ],
+  "resource_values": [
+    2,
+    4,
+    8,
+    12,
+    16
+  ],
+  "resource_probabilities": [
+    0.3,
+    0.25,
+    0.25,
+    0.15,
+    0.05
+  ],
+  "mean_workload": 1.0,
+  "workload_family_profile": "basic",
+  "fixed_workload": "exponential",
+  "workload_family_basic": [
+    "deterministic",
+    "exponential",
+    "erlang_4",
+    "hyperexp_heavy"
+  ],
+  "workload_family_full": [
+    "deterministic",
+    "exponential",
+    "erlang_2",
+    "erlang_4",
+    "erlang_8",
+    "hyperexp_2",
+    "hyperexp_heavy"
+  ],
+  "workload_hyperexp_p": 0.75,
+  "workload_hyperexp_fast_multiplier": 4.0,
+  "workload_hyperexp_heavy_p": 0.85,
+  "workload_hyperexp_heavy_fast_multiplier": 6.0,
+  "arrival_process_family": [
+    "poisson",
+    "erlang_2",
+    "erlang_4",
+    "hyperexp_2"
+  ],
+  "arrival_hyperexp_p": 0.75,
+  "arrival_hyperexp_fast_multiplier": 4.0
+}
