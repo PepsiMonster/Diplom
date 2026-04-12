@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import time
@@ -11,6 +12,9 @@ import values as v
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PY_DIR = PROJECT_ROOT / "py"
+CUDA_DIR = PROJECT_ROOT / "cuda"
+KERNEL_CU = CUDA_DIR / "sim_kernel.cu"
+KERNEL_PTX = CUDA_DIR / "sim_kernel.ptx"
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
@@ -24,6 +28,35 @@ def generate_experiment_json() -> Path:
     if not out.exists():
         raise FileNotFoundError(f"JSON не был создан: {out}")
     return out
+
+
+def ensure_kernel_ptx() -> None:
+    if not KERNEL_CU.exists():
+        raise FileNotFoundError(f"CUDA kernel source not found: {KERNEL_CU}")
+
+    must_rebuild = (not KERNEL_PTX.exists()) or (KERNEL_CU.stat().st_mtime > KERNEL_PTX.stat().st_mtime)
+    if not must_rebuild:
+        print(f"PTX актуален: {KERNEL_PTX}")
+        return
+
+    nvcc = shutil.which("nvcc")
+    if nvcc is None:
+        raise RuntimeError(
+            "PTX требуется пересобрать, но nvcc не найден в PATH. "
+            "Установите CUDA Toolkit или добавьте nvcc в PATH."
+        )
+
+    print("PTX отсутствует или устарел. Пересобираю kernel...")
+    run_command(
+        [
+            nvcc,
+            "-ptx",
+            str(KERNEL_CU),
+            "-o",
+            str(KERNEL_PTX),
+        ],
+        cwd=PROJECT_ROOT,
+    )
 
 
 def list_existing_dirs(root: Path) -> set[Path]:
@@ -259,6 +292,11 @@ def main() -> None:
     json_path = generate_experiment_json()
     print(f"JSON создан: {json_path.resolve()}")
     print()
+
+    if args.backend == "gpu":
+        print("Шаг 1.5/4: Проверка и сборка PTX kernel (при необходимости)...")
+        ensure_kernel_ptx()
+        print()
 
     values_payload = json.loads(json_path.read_text(encoding="utf-8"))
     effective_suite_name = args.suite_name or v.SUITE_NAME
