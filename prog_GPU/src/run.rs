@@ -8,7 +8,6 @@ use crate::experiments::{
 };
 use crate::output::{save_suite_result, OutputArtifacts, OutputError, SaveOptions};
 use crate::params::{ExperimentConfig, ParamsError};
-use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -91,40 +90,26 @@ fn run_suite_like(
     save_options: &SaveOptions,
     is_full_mode: bool,
 ) -> Result<()> {
-    let started_at = Instant::now();
-
-    let load_started = Instant::now();
     let config = load_effective_config(common)?;
-    let load_elapsed = load_started.elapsed();
 
     println!("Загружена конфигурация:");
     println!("{}", config.summary_string()?);
-    println!("Время загрузки/override конфигурации: {:.2?}", load_elapsed);
     println!();
 
-    let plan_started = Instant::now();
     let plan = build_experiment_plan(&config, common.scenario_family, None)?;
-    let plan_elapsed = plan_started.elapsed();
     println!("{}", plan.summary_string());
     println!("{}", plan.grid.summary_string());
     println!("Backend: {:?}", backend);
     println!("CI level: {}", ci_level);
     println!("Output root: {}", common.output_root.display());
-    println!("Время построения плана: {:.2?}", plan_elapsed);
     println!();
 
-    let sim_started = Instant::now();
     let suite_result =
         run_experiment_suite(&config, common.scenario_family, backend, None, ci_level)?;
-    let sim_elapsed = sim_started.elapsed();
 
-    let summary_started = Instant::now();
     println!("{}", render_suite_summary_text(&suite_result, None));
-    let summary_elapsed = summary_started.elapsed();
 
-    let save_started = Instant::now();
     let artifacts = save_suite_result(&suite_result, &common.output_root, save_options)?;
-    let save_elapsed = save_started.elapsed();
     print_artifacts(&artifacts);
 
     if is_full_mode {
@@ -132,10 +117,6 @@ fn run_suite_like(
     } else {
         println!("Suite run завершён успешно.");
     }
-    println!("Время simulation: {:.2?}", sim_elapsed);
-    println!("Время рендера summary: {:.2?}", summary_elapsed);
-    println!("Время сохранения артефактов: {:.2?}", save_elapsed);
-    println!("Общее время run_suite_like: {:.2?}", started_at.elapsed());
 
     Ok(())
 }

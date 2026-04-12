@@ -578,8 +578,6 @@ impl SimulationBackend for GpuBackend {
         })?;
 
         let kernel = self.compile_and_load_kernel(&ctx)?;
-        let mut timings = GpuTimingBreakdown::default();
-
         let mut out = Vec::with_capacity(requests.len());
         let mut group_start = 0usize;
         while group_start < requests.len() {
@@ -595,23 +593,9 @@ impl SimulationBackend for GpuBackend {
             let (summaries, group_timings) =
                 self.run_group_on_gpu(&requests[group_start..group_end], &ctx, &kernel)?;
             out.extend(summaries);
-            timings.htod += group_timings.htod;
-            timings.kernel += group_timings.kernel;
-            timings.dtoh += group_timings.dtoh;
-            timings.summary += group_timings.summary;
+            let _ = group_timings;
             group_start = group_end;
         }
-
-        eprintln!(
-            "GPU real test backend finished: {} run(s). block_size={}, save_pi_hat={}, htod={:.3}s, kernel={:.3}s, dtoh={:.3}s, summary={:.3}s",
-            out.len(),
-            self.block_size,
-            self.save_pi_hat,
-            timings.htod.as_secs_f64(),
-            timings.kernel.as_secs_f64(),
-            timings.dtoh.as_secs_f64(),
-            timings.summary.as_secs_f64(),
-        );
 
         Ok(out)
     }

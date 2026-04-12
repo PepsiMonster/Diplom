@@ -201,8 +201,11 @@ def run_rust_full(
     warmup_time: float | None,
     gpu_block_size: int | None,
     gpu_save_pi_hat: bool,
+    verbose: bool,
 ) -> float:
     cmd = ["cargo", "run"]
+    if not verbose:
+        cmd.append("--quiet")
 
     if release:
         cmd.append("--release")
@@ -245,6 +248,8 @@ def run_rust_full(
         if gpu_block_size is not None:
             env["SIM_GPU_BLOCK_SIZE"] = str(gpu_block_size)
         env["SIM_GPU_SAVE_PI_HAT"] = "1" if gpu_save_pi_hat else "0"
+        if not verbose:
+            env["RUSTFLAGS"] = (env.get("RUSTFLAGS", "") + " -Awarnings").strip()
 
     started = time.perf_counter()
     print(">", " ".join(str(x) for x in cmd))
@@ -406,6 +411,11 @@ def main() -> None:
         action="store_true",
         help="Отключить сбор pi_hat (ускоренный режим без state_times)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Печатать полный вывод cargo/rustc (включая предупреждения)",
+    )
 
     args = parser.parse_args()
 
@@ -455,6 +465,7 @@ def main() -> None:
                 warmup_time=preflight_warmup_time,
                 gpu_block_size=args.gpu_block_size,
                 gpu_save_pi_hat=not args.gpu_no_pi_hat,
+                verbose=args.verbose,
             )
         except subprocess.CalledProcessError as e:
             print(
@@ -502,6 +513,7 @@ def main() -> None:
         warmup_time=args.warmup_time,
         gpu_block_size=args.gpu_block_size,
         gpu_save_pi_hat=not args.gpu_no_pi_hat,
+        verbose=args.verbose,
     )
     print(f"Rust pipeline elapsed: {run_elapsed:.1f} sec ({run_elapsed/60.0:.1f} min)")
     print()
