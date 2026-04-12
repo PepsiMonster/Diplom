@@ -442,36 +442,46 @@ def main() -> None:
     do_preflight = args.estimate_only or args.with_estimate
     if do_preflight:
         print("Preflight: быстрый прогон для оценки времени...")
-        preflight_elapsed = run_rust_full(
-            release=args.release,
-            input_json=json_path,
-            scenario_family=args.scenario_family,
-            backend=args.backend,
-            output_root=output_root,
-            suite_name=f"{effective_suite_name}__preflight",
-            replications=preflight_replications,
-            max_time=preflight_max_time,
-            warmup_time=preflight_warmup_time,
-            gpu_block_size=args.gpu_block_size,
-            gpu_save_pi_hat=not args.gpu_no_pi_hat,
-        )
+        try:
+            preflight_elapsed = run_rust_full(
+                release=args.release,
+                input_json=json_path,
+                scenario_family=args.scenario_family,
+                backend=args.backend,
+                output_root=output_root,
+                suite_name=f"{effective_suite_name}__preflight",
+                replications=preflight_replications,
+                max_time=preflight_max_time,
+                warmup_time=preflight_warmup_time,
+                gpu_block_size=args.gpu_block_size,
+                gpu_save_pi_hat=not args.gpu_no_pi_hat,
+            )
+        except subprocess.CalledProcessError as e:
+            print(
+                f"Preflight завершился с ошибкой (exit={e.returncode}). "
+                "Для --with-estimate продолжаю основной запуск без оценки."
+            )
+            if args.estimate_only:
+                raise
+            preflight_elapsed = None
 
-        target_runs = estimate_num_runs(values_payload, args.scenario_family, target_replications)
-        preflight_runs = estimate_num_runs(values_payload, args.scenario_family, preflight_replications)
+        if preflight_elapsed is not None:
+            target_runs = estimate_num_runs(values_payload, args.scenario_family, target_replications)
+            preflight_runs = estimate_num_runs(values_payload, args.scenario_family, preflight_replications)
 
-        estimate_seconds = (
-            preflight_elapsed
-            * (target_replications / preflight_replications)
-            * (target_max_time / preflight_max_time)
-            * (target_runs / preflight_runs)
-        )
+            estimate_seconds = (
+                preflight_elapsed
+                * (target_replications / preflight_replications)
+                * (target_max_time / preflight_max_time)
+                * (target_runs / preflight_runs)
+            )
 
-        print()
-        print("Оценка времени полного прогона:")
-        print(f"  preflight elapsed: {preflight_elapsed:.1f} sec")
-        print(f"  target runs: {target_runs}, preflight runs: {preflight_runs}")
-        print(f"  estimated full runtime: {estimate_seconds:.1f} sec ({estimate_seconds/60.0:.1f} min)")
-        print()
+            print()
+            print("Оценка времени полного прогона:")
+            print(f"  preflight elapsed: {preflight_elapsed:.1f} sec")
+            print(f"  target runs: {target_runs}, preflight runs: {preflight_runs}")
+            print(f"  estimated full runtime: {estimate_seconds:.1f} sec ({estimate_seconds/60.0:.1f} min)")
+            print()
 
         if args.estimate_only:
             print("Запрошен только preflight (--estimate-only), основной запуск пропущен.")
