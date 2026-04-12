@@ -113,10 +113,8 @@ fn run_suite_like(
     println!("Время построения плана: {:.2?}", plan_elapsed);
     println!();
 
-    let sim_started = Instant::now();
     let suite_result =
         run_experiment_suite(&config, common.scenario_family, backend, None, ci_level)?;
-    let sim_elapsed = sim_started.elapsed();
 
     let summary_started = Instant::now();
     println!("{}", render_suite_summary_text(&suite_result, None));

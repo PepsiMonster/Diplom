@@ -151,6 +151,8 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
     double workload_p,
     double workload_fast_mult,
 
+    unsigned int collect_state_times,
+
     unsigned int resource_len,
     unsigned int rv0, unsigned int rv1, unsigned int rv2, unsigned int rv3,
     unsigned int rv4, unsigned int rv5, unsigned int rv6, unsigned int rv7,
@@ -184,8 +186,10 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
     unsigned int state_offset = run_id * (capacity_k + 1);
 
-    for (unsigned int k = 0; k <= capacity_k; ++k) {
-        out_state_times[state_offset + k] = 0.0;
+    if (collect_state_times != 0u) {
+        for (unsigned int k = 0; k <= capacity_k; ++k) {
+            out_state_times[state_offset + k] = 0.0;
+        }
     }
 
     out_arrival_attempts[run_id] = 0ULL;
@@ -241,7 +245,9 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
         double overlap = overlap_len(current_time, next_event_time, warmup_time, max_time);
         if (overlap > 0.0) {
-            out_state_times[state_offset + active_count] += overlap;
+            if (collect_state_times != 0u) {
+                out_state_times[state_offset + active_count] += overlap;
+            }
             out_resource_time[run_id] += ((double)occupied_resource) * overlap;
         }
 

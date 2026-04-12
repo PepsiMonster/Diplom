@@ -113,40 +113,21 @@ pub fn execute_experiment_plan(
     backend: &dyn SimulationBackend,
     ci_level: f64,
 ) -> Result<ExperimentSuiteResult> {
-    let total_scenarios = plan.grid.scenarios.len();
-    let started_at = Instant::now();
     let mut run_summaries: Vec<RunSummary> = Vec::with_capacity(plan.run_requests.len());
 
-    let mut scenario_idx = 0usize;
     let mut i = 0usize;
     while i < plan.run_requests.len() {
-        let key = plan.run_requests[i].scenario.scenario_key.clone();
+        let scenario_key = &plan.run_requests[i].scenario.scenario_key;
         let mut j = i + 1;
-        while j < plan.run_requests.len() && plan.run_requests[j].scenario.scenario_key == key {
+        while j < plan.run_requests.len()
+            && plan.run_requests[j].scenario.scenario_key == *scenario_key
+        {
             j += 1;
         }
 
         let group = &plan.run_requests[i..j];
-        let group_started = Instant::now();
         let partial = backend.execute_batch(group)?;
         run_summaries.extend(partial);
-
-        scenario_idx += 1;
-        let elapsed = started_at.elapsed();
-        let elapsed_sec = elapsed.as_secs_f64();
-        let avg_per_scenario = elapsed_sec / scenario_idx as f64;
-        let remaining = total_scenarios.saturating_sub(scenario_idx) as f64;
-        let eta_sec = avg_per_scenario * remaining;
-
-        eprintln!(
-            "Completed scenario {}/{} ({}) | scenario_elapsed={:.1}s | elapsed={:.1}s | ETA={:.1}s",
-            scenario_idx,
-            total_scenarios,
-            key,
-            group_started.elapsed().as_secs_f64(),
-            elapsed_sec,
-            eta_sec
-        );
 
         i = j;
     }

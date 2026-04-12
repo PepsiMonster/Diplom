@@ -2,23 +2,52 @@ use super::{BackendError, Result, RunRequest, SimulationBackend};
 use crate::params::{ArrivalProcessSpec, WorkloadDistributionSpec};
 use crate::stats::RunSummary;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use cudarc::{
     driver::{CudaContext, LaunchConfig, PushKernelArg},
     nvrtc::Ptx,
+    nvrtc::Ptx,
 };
 
+const GPU_KERNEL_PTX_PATH: &str = "cuda/sim_kernel.ptx";
 const GPU_KERNEL_PTX_PATH: &str = "cuda/sim_kernel.ptx";
 
 #[derive(Debug, Clone)]
 pub struct GpuBackend {
     pub max_batch_size: usize,
+    pub block_size: u32,
+    pub save_pi_hat: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+struct GpuTimingBreakdown {
+    htod: Duration,
+    kernel: Duration,
+    dtoh: Duration,
+    summary: Duration,
 }
 
 impl GpuBackend {
     pub fn new() -> Result<Self> {
+        let block_size = std::env::var("SIM_GPU_BLOCK_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(128);
+        if !matches!(block_size, 64 | 128 | 256) {
+            return Err(BackendError::Validation(format!(
+                "SIM_GPU_BLOCK_SIZE должен быть одним из [64, 128, 256], получено {block_size}"
+            )));
+        }
+
+        let save_pi_hat = std::env::var("SIM_GPU_SAVE_PI_HAT")
+            .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+            .unwrap_or(true);
+
         Ok(Self {
             max_batch_size: 65_536,
+            block_size,
+            save_pi_hat,
         })
     }
 
@@ -41,7 +70,10 @@ impl GpuBackend {
 
         if let ArrivalProcessSpec::Erlang { order } = scenario.arrival_spec {
             if order == 0 {
+        if let ArrivalProcessSpec::Erlang { order } = scenario.arrival_spec {
+            if order == 0 {
                 return Err(BackendError::Validation(
+                    "arrival Erlang order должен быть > 0".to_string(),
                     "arrival Erlang order должен быть > 0".to_string(),
                 ));
             }
@@ -66,9 +98,47 @@ impl GpuBackend {
 
         if let WorkloadDistributionSpec::Erlang { order, .. } = scenario.workload_spec {
             if order == 0 {
+        if let ArrivalProcessSpec::Hyperexponential2 {
+            p,
+            fast_rate_multiplier,
+        } = scenario.arrival_spec
+        {
+            if !(0.0 < p && p < 1.0) {
+                return Err(BackendError::Validation(format!(
+                    "arrival HyperExp(2) требует p в (0,1), получено {p}"
+                )));
+            }
+            if fast_rate_multiplier <= 0.0 {
+                return Err(BackendError::Validation(format!(
+                    "arrival HyperExp(2) требует fast_rate_multiplier > 0, получено {fast_rate_multiplier}"
+                )));
+            }
+        }
+
+        if let WorkloadDistributionSpec::Erlang { order, .. } = scenario.workload_spec {
+            if order == 0 {
                 return Err(BackendError::Validation(
                     "workload Erlang order должен быть > 0".to_string(),
+                    "workload Erlang order должен быть > 0".to_string(),
                 ));
+            }
+        }
+
+        if let WorkloadDistributionSpec::Hyperexponential2 {
+            p,
+            fast_rate_multiplier,
+            ..
+        } = scenario.workload_spec
+        {
+            if !(0.0 < p && p < 1.0) {
+                return Err(BackendError::Validation(format!(
+                    "workload HyperExp(2) требует p в (0,1), получено {p}"
+                )));
+            }
+            if fast_rate_multiplier <= 0.0 {
+                return Err(BackendError::Validation(format!(
+                    "workload HyperExp(2) требует fast_rate_multiplier > 0, получено {fast_rate_multiplier}"
+                )));
             }
         }
 
@@ -112,9 +182,12 @@ impl GpuBackend {
         ctx: &Arc<CudaContext>,
     ) -> Result<cudarc::driver::CudaFunction> {
         let ptx = Ptx::from_file(GPU_KERNEL_PTX_PATH);
+        let ptx = Ptx::from_file(GPU_KERNEL_PTX_PATH);
 
         let module = ctx.load_module(ptx).map_err(|e| {
             BackendError::Validation(format!(
+                "Не удалось загрузить PTX-модуль '{}' в CUDA context: {:?}",
+                GPU_KERNEL_PTX_PATH, e
                 "Не удалось загрузить PTX-модуль '{}' в CUDA context: {:?}",
                 GPU_KERNEL_PTX_PATH, e
             ))
@@ -182,7 +255,36 @@ impl GpuBackend {
     }
 
     fn run_group_on_gpu(
+    fn arrival_params(spec: &ArrivalProcessSpec) -> (u32, u32, f64, f64) {
+        match spec {
+            ArrivalProcessSpec::Poisson => (0, 0, 0.5, 1.0),
+            ArrivalProcessSpec::Erlang { order } => (1, *order as u32, 0.5, 1.0),
+            ArrivalProcessSpec::Hyperexponential2 {
+                p,
+                fast_rate_multiplier,
+            } => (2, 0, *p, *fast_rate_multiplier),
+        }
+    }
+
+    fn workload_params(spec: &WorkloadDistributionSpec) -> (u32, u32, f64, f64, f64) {
+        match spec {
+            WorkloadDistributionSpec::Deterministic { mean, .. } => (0, 0, *mean, 0.5, 1.0),
+            WorkloadDistributionSpec::Exponential { mean, .. } => (1, 0, *mean, 0.5, 1.0),
+            WorkloadDistributionSpec::Erlang { mean, order, .. } => {
+                (2, *order as u32, *mean, 0.5, 1.0)
+            }
+            WorkloadDistributionSpec::Hyperexponential2 {
+                mean,
+                p,
+                fast_rate_multiplier,
+                ..
+            } => (3, 0, *mean, *p, *fast_rate_multiplier),
+        }
+    }
+
+    fn run_group_on_gpu(
         &self,
+        requests: &[RunRequest],
         requests: &[RunRequest],
         ctx: &Arc<CudaContext>,
         kernel: &cudarc::driver::CudaFunction,
@@ -204,8 +306,11 @@ impl GpuBackend {
         let num_runs = requests.len();
         let num_runs_u32 = num_runs as u32;
         let stream = ctx.default_stream();
+        let mut timings = GpuTimingBreakdown::default();
 
         let resource_values = Self::padded_resource_values(&scenario.resource_distribution.values);
+        let resource_cdf =
+            Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
         let resource_cdf =
             Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
 
@@ -220,42 +325,55 @@ impl GpuBackend {
         })?;
 
         let mut out_arrival_attempts = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
+        let mut out_arrival_attempts = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_arrival_attempts failed: {:?}", e))
         })?;
+        let mut out_accepted_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
         let mut out_accepted_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_accepted_arrivals failed: {:?}", e))
         })?;
         let mut out_rejected_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
+        let mut out_rejected_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_arrivals failed: {:?}", e))
         })?;
+        let mut out_rejected_capacity = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
         let mut out_rejected_capacity = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_capacity failed: {:?}", e))
         })?;
         let mut out_rejected_server = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
+        let mut out_rejected_server = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_server failed: {:?}", e))
         })?;
+        let mut out_rejected_resource = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
         let mut out_rejected_resource = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_resource failed: {:?}", e))
         })?;
         let mut out_completed_jobs = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
+        let mut out_completed_jobs = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_completed_jobs failed: {:?}", e))
         })?;
+        let mut out_completed_time_samples = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
         let mut out_completed_time_samples = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_completed_time_samples failed: {:?}", e))
         })?;
 
         let mut out_resource_time = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
+        let mut out_resource_time = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_resource_time failed: {:?}", e))
         })?;
+        let mut out_service_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
         let mut out_service_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_service_time_sum failed: {:?}", e))
         })?;
         let mut out_service_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
+        let mut out_service_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_service_time_sq_sum failed: {:?}", e))
         })?;
         let mut out_sojourn_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
+        let mut out_sojourn_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_sojourn_time_sum failed: {:?}", e))
         })?;
+        let mut out_sojourn_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
         let mut out_sojourn_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_sojourn_time_sq_sum failed: {:?}", e))
         })?;
@@ -296,6 +414,7 @@ impl GpuBackend {
         builder.arg(&workload_fast_mult);
 
         builder.arg(&resource_len_u32);
+        builder.arg(&resource_len_u32);
 
         builder.arg(&resource_values[0]);
         builder.arg(&resource_values[1]);
@@ -332,6 +451,7 @@ impl GpuBackend {
 
         builder.arg(&mut out_state_times);
 
+        let kernel_started = Instant::now();
         unsafe {
             builder
                 .launch(LaunchConfig::for_num_elems(num_runs_u32))
@@ -342,27 +462,42 @@ impl GpuBackend {
                     ))
                 })?;
         }
+        timings.kernel += kernel_started.elapsed();
 
+        let dtoh_started = Instant::now();
         let arrival_attempts = stream.clone_dtoh(&out_arrival_attempts).map_err(|e| {
             BackendError::Validation(format!("dtoh arrival_attempts failed: {:?}", e))
+        })?;
         })?;
         let accepted_arrivals = stream.clone_dtoh(&out_accepted_arrivals).map_err(|e| {
             BackendError::Validation(format!("dtoh accepted_arrivals failed: {:?}", e))
         })?;
+        })?;
         let rejected_arrivals = stream.clone_dtoh(&out_rejected_arrivals).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_arrivals failed: {:?}", e))
+        })?;
         })?;
         let rejected_capacity = stream.clone_dtoh(&out_rejected_capacity).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_capacity failed: {:?}", e))
         })?;
+        })?;
         let rejected_server = stream.clone_dtoh(&out_rejected_server).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_server failed: {:?}", e))
+        })?;
         })?;
         let rejected_resource = stream.clone_dtoh(&out_rejected_resource).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_resource failed: {:?}", e))
         })?;
+        })?;
         let completed_jobs = stream.clone_dtoh(&out_completed_jobs).map_err(|e| {
             BackendError::Validation(format!("dtoh completed_jobs failed: {:?}", e))
+        })?;
+        let completed_time_samples =
+            stream
+                .clone_dtoh(&out_completed_time_samples)
+                .map_err(|e| {
+                    BackendError::Validation(format!("dtoh completed_time_samples failed: {:?}", e))
+                })?;
         })?;
         let completed_time_samples =
             stream
@@ -374,14 +509,20 @@ impl GpuBackend {
         let resource_time = stream
             .clone_dtoh(&out_resource_time)
             .map_err(|e| BackendError::Validation(format!("dtoh resource_time failed: {:?}", e)))?;
+        let resource_time = stream
+            .clone_dtoh(&out_resource_time)
+            .map_err(|e| BackendError::Validation(format!("dtoh resource_time failed: {:?}", e)))?;
         let service_time_sum = stream.clone_dtoh(&out_service_time_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh service_time_sum failed: {:?}", e))
+        })?;
         })?;
         let service_time_sq_sum = stream.clone_dtoh(&out_service_time_sq_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh service_time_sq_sum failed: {:?}", e))
         })?;
+        })?;
         let sojourn_time_sum = stream.clone_dtoh(&out_sojourn_time_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh sojourn_time_sum failed: {:?}", e))
+        })?;
         })?;
         let sojourn_time_sq_sum = stream.clone_dtoh(&out_sojourn_time_sq_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh sojourn_time_sq_sum failed: {:?}", e))
@@ -414,7 +555,25 @@ impl GpuBackend {
                 0.0
             };
             let throughput = completed_jobs[run_id] as f64 / observed_time;
+            let mean_occupied_resource = resource_time[run_id] / observed_time;
+            let loss_probability = if arrival_attempts[run_id] > 0 {
+                rejected_arrivals[run_id] as f64 / arrival_attempts[run_id] as f64
+            } else {
+                0.0
+            };
+            let throughput = completed_jobs[run_id] as f64 / observed_time;
 
+            let n = completed_time_samples[run_id] as f64;
+            let mean_service_time = if n > 0.0 {
+                service_time_sum[run_id] / n
+            } else {
+                0.0
+            };
+            let mean_sojourn_time = if n > 0.0 {
+                sojourn_time_sum[run_id] / n
+            } else {
+                0.0
+            };
             let n = completed_time_samples[run_id] as f64;
             let mean_service_time = if n > 0.0 {
                 service_time_sum[run_id] / n
@@ -434,7 +593,21 @@ impl GpuBackend {
             } else {
                 0.0
             };
+            let std_service_time = if n > 0.0 {
+                ((service_time_sq_sum[run_id] / n) - mean_service_time * mean_service_time)
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                0.0
+            };
 
+            let std_sojourn_time = if n > 0.0 {
+                ((sojourn_time_sq_sum[run_id] / n) - mean_sojourn_time * mean_sojourn_time)
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                0.0
+            };
             let std_sojourn_time = if n > 0.0 {
                 ((sojourn_time_sq_sum[run_id] / n) - mean_sojourn_time * mean_sojourn_time)
                     .max(0.0)
@@ -449,11 +622,28 @@ impl GpuBackend {
                 scenario_name: scenario.scenario_name.clone(),
                 replication_index: request.replication_index,
                 seed: request.seed,
+            let request = &requests[run_id];
+            let summary = RunSummary {
+                scenario_key: scenario.scenario_key.clone(),
+                scenario_name: scenario.scenario_name.clone(),
+                replication_index: request.replication_index,
+                seed: request.seed,
 
                 total_time: scenario.max_time,
                 warmup_time: scenario.warmup_time,
                 observed_time,
+                total_time: scenario.max_time,
+                warmup_time: scenario.warmup_time,
+                observed_time,
 
+                arrival_attempts: arrival_attempts[run_id],
+                accepted_arrivals: accepted_arrivals[run_id],
+                rejected_arrivals: rejected_arrivals[run_id],
+                rejected_capacity: rejected_capacity[run_id],
+                rejected_server: rejected_server[run_id],
+                rejected_resource: rejected_resource[run_id],
+                completed_jobs: completed_jobs[run_id],
+                completed_time_samples: completed_time_samples[run_id],
                 arrival_attempts: arrival_attempts[run_id],
                 accepted_arrivals: accepted_arrivals[run_id],
                 rejected_arrivals: rejected_arrivals[run_id],
@@ -467,12 +657,22 @@ impl GpuBackend {
                 mean_occupied_resource,
                 loss_probability,
                 throughput,
+                mean_num_jobs,
+                mean_occupied_resource,
+                loss_probability,
+                throughput,
 
                 mean_service_time,
                 mean_sojourn_time,
                 std_service_time,
                 std_sojourn_time,
+                mean_service_time,
+                mean_sojourn_time,
+                std_service_time,
+                std_sojourn_time,
 
+                pi_hat,
+            };
                 pi_hat,
             };
 
@@ -510,7 +710,6 @@ impl SimulationBackend for GpuBackend {
         })?;
 
         let kernel = self.compile_and_load_kernel(&ctx)?;
-
         let mut out = Vec::with_capacity(requests.len());
         let mut group_start = 0usize;
         while group_start < requests.len() {
@@ -537,3 +736,4 @@ impl SimulationBackend for GpuBackend {
         Ok(out)
     }
 }
+
