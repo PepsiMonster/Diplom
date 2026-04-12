@@ -3,14 +3,13 @@ use crate::backend::{
 };
 use crate::cli::{BackendKind, ScenarioFamily};
 use crate::params::{ExperimentConfig, ParamsError};
-use crate::scenario_grid::{
-    build_scenario_grid, ScenarioGrid, ScenarioGridError, ScenarioSpec,
-};
+use crate::scenario_grid::{build_scenario_grid, ScenarioGrid, ScenarioGridError, ScenarioSpec};
 use crate::stats::{
     summarize_scenario_runs, ExperimentSuiteResult, RunSummary, ScenarioStats, StatsError,
 };
 use chrono::Local;
 use std::collections::BTreeMap;
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -114,7 +113,44 @@ pub fn execute_experiment_plan(
     backend: &dyn SimulationBackend,
     ci_level: f64,
 ) -> Result<ExperimentSuiteResult> {
-    let run_summaries = backend.execute_batch(&plan.run_requests)?;
+    let total_scenarios = plan.grid.scenarios.len();
+    let started_at = Instant::now();
+    let mut run_summaries: Vec<RunSummary> = Vec::with_capacity(plan.run_requests.len());
+
+    let mut scenario_idx = 0usize;
+    let mut i = 0usize;
+    while i < plan.run_requests.len() {
+        let key = plan.run_requests[i].scenario.scenario_key.clone();
+        let mut j = i + 1;
+        while j < plan.run_requests.len() && plan.run_requests[j].scenario.scenario_key == key {
+            j += 1;
+        }
+
+        let group = &plan.run_requests[i..j];
+        let group_started = Instant::now();
+        let partial = backend.execute_batch(group)?;
+        run_summaries.extend(partial);
+
+        scenario_idx += 1;
+        let elapsed = started_at.elapsed();
+        let elapsed_sec = elapsed.as_secs_f64();
+        let avg_per_scenario = elapsed_sec / scenario_idx as f64;
+        let remaining = total_scenarios.saturating_sub(scenario_idx) as f64;
+        let eta_sec = avg_per_scenario * remaining;
+
+        eprintln!(
+            "Completed scenario {}/{} ({}) | scenario_elapsed={:.1}s | elapsed={:.1}s | ETA={:.1}s",
+            scenario_idx,
+            total_scenarios,
+            key,
+            group_started.elapsed().as_secs_f64(),
+            elapsed_sec,
+            eta_sec
+        );
+
+        i = j;
+    }
+
     assemble_suite_result(
         &plan.suite_name,
         ci_level,
@@ -303,7 +339,10 @@ pub fn render_suite_summary_text(
     out.push_str(&format!("SUITE: {}\n", suite_result.suite_name));
     out.push_str(&format!("Created at: {}\n", suite_result.created_at));
     out.push_str(&format!("CI level: {}\n", suite_result.ci_level));
-    out.push_str(&format!("Scenarios: {}\n", suite_result.scenario_results.len()));
+    out.push_str(&format!(
+        "Scenarios: {}\n",
+        suite_result.scenario_results.len()
+    ));
     out.push_str(&format!("{}\n\n", "#".repeat(96)));
 
     for stats in suite_result.scenario_results.values() {
