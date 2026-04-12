@@ -327,12 +327,14 @@ impl GpuBackend {
         })?;
 
         let state_stride = scenario.capacity_k + 1;
-        let mut out_state_times =
-            stream
-                .alloc_zeros::<f64>(state_stride * num_runs)
-                .map_err(|e| {
-                    BackendError::Validation(format!("alloc out_state_times failed: {:?}", e))
-                })?;
+        let state_buffer_len = if self.save_pi_hat {
+            state_stride * num_runs
+        } else {
+            1
+        };
+        let mut out_state_times = stream.alloc_zeros::<f64>(state_buffer_len).map_err(|e| {
+            BackendError::Validation(format!("alloc out_state_times failed: {:?}", e))
+        })?;
 
         let mut builder = stream.launch_builder(kernel);
 
@@ -462,9 +464,13 @@ impl GpuBackend {
             BackendError::Validation(format!("dtoh sojourn_time_sq_sum failed: {:?}", e))
         })?;
 
-        let state_times = stream
-            .clone_dtoh(&out_state_times)
-            .map_err(|e| BackendError::Validation(format!("dtoh state_times failed: {:?}", e)))?;
+        let state_times = if self.save_pi_hat {
+            stream.clone_dtoh(&out_state_times).map_err(|e| {
+                BackendError::Validation(format!("dtoh state_times failed: {:?}", e))
+            })?
+        } else {
+            Vec::new()
+        };
         timings.dtoh += dtoh_started.elapsed();
 
         let observed_time = scenario.max_time - scenario.warmup_time;
@@ -472,21 +478,6 @@ impl GpuBackend {
         let summary_started = Instant::now();
 
         for run_id in 0..num_runs {
-            let state_offset = run_id * state_stride;
-            let mut pi_hat: Vec<f64> = state_times[state_offset..state_offset + state_stride]
-                .iter()
-                .map(|x| *x / observed_time)
-                .collect();
-            if !self.save_pi_hat {
-                pi_hat = vec![1.0];
-            }
-
-            let mean_num_jobs = state_times[state_offset..state_offset + state_stride]
-                .iter()
-                .enumerate()
-                .map(|(k, x)| k as f64 * (*x / observed_time))
-                .sum::<f64>();
-
             let mean_occupied_resource = resource_time[run_id] / observed_time;
             let loss_probability = if arrival_attempts[run_id] > 0 {
                 rejected_arrivals[run_id] as f64 / arrival_attempts[run_id] as f64
@@ -505,6 +496,22 @@ impl GpuBackend {
                 sojourn_time_sum[run_id] / n
             } else {
                 0.0
+            };
+            let (pi_hat, mean_num_jobs) = if self.save_pi_hat {
+                let state_offset = run_id * state_stride;
+                let pi_hat: Vec<f64> = state_times[state_offset..state_offset + state_stride]
+                    .iter()
+                    .map(|x| *x / observed_time)
+                    .collect();
+                let mean_num_jobs = pi_hat
+                    .iter()
+                    .enumerate()
+                    .map(|(k, p)| k as f64 * *p)
+                    .sum::<f64>();
+                (pi_hat, mean_num_jobs)
+            } else {
+                // Для benchmark-режима без state_times используем оценку по формуле Литтла.
+                (vec![1.0], throughput * mean_sojourn_time)
             };
 
             let std_service_time = if n > 0.0 {
