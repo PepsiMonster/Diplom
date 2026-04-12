@@ -70,13 +70,21 @@ def ensure_kernel_ptx() -> None:
         "-o",
         str(KERNEL_PTX),
     ]
+    if platform.system().lower().startswith("win"):
+        ccbin = _find_msvc_compiler_dir_from_path()
+        if ccbin is not None:
+            base_cmd.extend(["-ccbin", str(ccbin)])
+
     result = run_command_capture(base_cmd, cwd=PROJECT_ROOT)
     if result.returncode == 0:
         return
 
     stderr = (result.stderr or "").strip()
     stdout = (result.stdout or "").strip()
-    cl_missing = "Cannot find compiler 'cl.exe' in PATH" in stderr
+    cl_missing = (
+        "Cannot find compiler 'cl.exe' in PATH" in stderr
+        or "Cannot find compiler 'cl.exe' in PATH" in stdout
+    )
 
     if platform.system().lower().startswith("win") and cl_missing:
         vcvars = _find_vcvars64_bat()
@@ -136,6 +144,22 @@ def _find_vcvars64_bat() -> Path | None:
     candidate = Path(out) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
     if candidate.exists():
         return candidate
+    return None
+
+
+def _find_msvc_compiler_dir_from_path() -> Path | None:
+    raw_path = os.environ.get("PATH", "")
+    for item in raw_path.split(os.pathsep):
+        entry = item.strip().strip('"')
+        if not entry:
+            continue
+        p = Path(entry)
+        if p.is_file() and p.name.lower() == "cl.exe":
+            return p.parent
+        if p.is_dir():
+            cl = p / "cl.exe"
+            if cl.exists():
+                return p
     return None
 
 
