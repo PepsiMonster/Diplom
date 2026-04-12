@@ -313,6 +313,8 @@ impl GpuBackend {
         builder.arg(&workload_p);
         builder.arg(&workload_fast_mult);
 
+        let collect_state_times_u32 = if self.save_pi_hat { 1_u32 } else { 0_u32 };
+        builder.arg(&collect_state_times_u32);
         builder.arg(&resource_len_u32);
 
         builder.arg(&resource_values[0]);
