@@ -39,6 +39,72 @@ __device__ __forceinline__ double sample_exp(unsigned long long* state, double r
     return -log(u) / rate;
 }
 
+__device__ __forceinline__ double sample_erlang(unsigned long long* state, unsigned int order, double mean) {
+    if (order == 0 || mean <= 0.0) return 0.0;
+    double rate = ((double)order) / mean;
+    double total = 0.0;
+    for (unsigned int i = 0; i < order; ++i) {
+        total += sample_exp(state, rate);
+    }
+    return total;
+}
+
+__device__ __forceinline__ double sample_hyperexp2(unsigned long long* state, double mean, double p, double fast_rate_multiplier) {
+    if (mean <= 0.0 || fast_rate_multiplier <= 0.0 || p <= 0.0 || p >= 1.0) return 0.0;
+    double rate_1 = fast_rate_multiplier / mean;
+    double denominator = mean - p / rate_1;
+    if (rate_1 <= 0.0 || denominator <= 0.0) return 0.0;
+    double rate_2 = (1.0 - p) / denominator;
+    if (rate_2 <= 0.0) return 0.0;
+    if (uniform01(state) <= p) return sample_exp(state, rate_1);
+    return sample_exp(state, rate_2);
+}
+
+__device__ __forceinline__ double sample_arrival_delta(
+    unsigned long long* state,
+    unsigned int mode,
+    unsigned int order,
+    double arrival_rate,
+    double p,
+    double fast_rate_multiplier
+) {
+    if (arrival_rate <= 0.0) return INF_TIME;
+
+    if (mode == 0u) { // poisson
+        return sample_exp(state, arrival_rate);
+    }
+    if (mode == 1u) { // erlang
+        return sample_erlang(state, order, 1.0 / arrival_rate);
+    }
+    if (mode == 2u) { // hyperexp2
+        return sample_hyperexp2(state, 1.0 / arrival_rate, p, fast_rate_multiplier);
+    }
+    return sample_exp(state, arrival_rate);
+}
+
+__device__ __forceinline__ double sample_workload_value(
+    unsigned long long* state,
+    unsigned int mode,
+    unsigned int order,
+    double mean,
+    double p,
+    double fast_rate_multiplier
+) {
+    if (mode == 0u) { // deterministic
+        return mean;
+    }
+    if (mode == 1u) { // exponential
+        return sample_exp(state, 1.0 / mean);
+    }
+    if (mode == 2u) { // erlang
+        return sample_erlang(state, order, mean);
+    }
+    if (mode == 3u) { // hyperexp2
+        return sample_hyperexp2(state, mean, p, fast_rate_multiplier);
+    }
+    return mean;
+}
+
 __device__ __forceinline__ double overlap_len(double a0, double a1, double b0, double b1) {
     double left = a0 > b0 ? a0 : b0;
     double right = a1 < b1 ? a1 : b1;
@@ -74,15 +140,26 @@ __device__ __forceinline__ unsigned int sample_resource(
 }
 
 extern "C" __global__ void simulate_loss_poisson_deterministic(
+    unsigned int num_runs,
     double arrival_rate,
     double service_speed,
     double max_time,
     double warmup_time,
-    double mean_workload,
     unsigned int servers_n,
     unsigned int capacity_k,
     unsigned int total_resource_r,
-    unsigned long long seed,
+    const unsigned long long* seeds,
+
+    unsigned int arrival_mode,
+    unsigned int arrival_order,
+    double arrival_p,
+    double arrival_fast_mult,
+
+    unsigned int workload_mode,
+    unsigned int workload_order,
+    double workload_mean,
+    double workload_p,
+    double workload_fast_mult,
 
     unsigned int resource_len,
     unsigned int rv0, unsigned int rv1, unsigned int rv2, unsigned int rv3,
@@ -106,7 +183,8 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
     double* out_state_times
 ) {
-    if (blockIdx.x != 0 || threadIdx.x != 0) {
+    unsigned int run_id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (run_id >= num_runs) {
         return;
     }
 
@@ -114,30 +192,38 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
         return;
     }
 
+    unsigned int state_offset = run_id * (capacity_k + 1);
+
     for (unsigned int k = 0; k <= capacity_k; ++k) {
-        out_state_times[k] = 0.0;
+        out_state_times[state_offset + k] = 0.0;
     }
 
-    out_arrival_attempts[0] = 0ULL;
-    out_accepted_arrivals[0] = 0ULL;
-    out_rejected_arrivals[0] = 0ULL;
-    out_rejected_capacity[0] = 0ULL;
-    out_rejected_server[0] = 0ULL;
-    out_rejected_resource[0] = 0ULL;
-    out_completed_jobs[0] = 0ULL;
-    out_completed_time_samples[0] = 0ULL;
+    out_arrival_attempts[run_id] = 0ULL;
+    out_accepted_arrivals[run_id] = 0ULL;
+    out_rejected_arrivals[run_id] = 0ULL;
+    out_rejected_capacity[run_id] = 0ULL;
+    out_rejected_server[run_id] = 0ULL;
+    out_rejected_resource[run_id] = 0ULL;
+    out_completed_jobs[run_id] = 0ULL;
+    out_completed_time_samples[run_id] = 0ULL;
 
-    out_resource_time[0] = 0.0;
-    out_service_time_sum[0] = 0.0;
-    out_service_time_sq_sum[0] = 0.0;
-    out_sojourn_time_sum[0] = 0.0;
-    out_sojourn_time_sq_sum[0] = 0.0;
+    out_resource_time[run_id] = 0.0;
+    out_service_time_sum[run_id] = 0.0;
+    out_service_time_sq_sum[run_id] = 0.0;
+    out_sojourn_time_sum[run_id] = 0.0;
+    out_sojourn_time_sq_sum[run_id] = 0.0;
 
-    unsigned long long rng_state = seed ^ 0xD1B54A32D192ED03ULL;
+    unsigned long long rng_state = seeds[run_id] ^ 0xD1B54A32D192ED03ULL;
 
     double current_time = 0.0;
-    double next_arrival_time = (arrival_rate > 0.0) ? sample_exp(&rng_state, arrival_rate) : INF_TIME;
-    double service_time_const = mean_workload / service_speed;
+    double next_arrival_time = sample_arrival_delta(
+        &rng_state,
+        arrival_mode,
+        arrival_order,
+        arrival_rate,
+        arrival_p,
+        arrival_fast_mult
+    );
 
     double departure_times[MAX_CAPACITY];
     double arrival_times[MAX_CAPACITY];
@@ -165,8 +251,8 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
         double overlap = overlap_len(current_time, next_event_time, warmup_time, max_time);
         if (overlap > 0.0) {
-            out_state_times[active_count] += overlap;
-            out_resource_time[0] += ((double)occupied_resource) * overlap;
+            out_state_times[state_offset + active_count] += overlap;
+            out_resource_time[run_id] += ((double)occupied_resource) * overlap;
         }
 
         current_time = next_event_time;
@@ -178,7 +264,7 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
         if (arrival_happened) {
             if (current_time >= warmup_time && current_time <= max_time) {
-                out_arrival_attempts[0] += 1ULL;
+                out_arrival_attempts[run_id] += 1ULL;
             }
 
             unsigned int demand = sample_resource(
@@ -192,38 +278,56 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
 
             if (active_count >= capacity_k) {
                 if (current_time >= warmup_time && current_time <= max_time) {
-                    out_rejected_arrivals[0] += 1ULL;
-                    out_rejected_capacity[0] += 1ULL;
+                    out_rejected_arrivals[run_id] += 1ULL;
+                    out_rejected_capacity[run_id] += 1ULL;
                 }
             } else if (active_count >= servers_n) {
                 if (current_time >= warmup_time && current_time <= max_time) {
-                    out_rejected_arrivals[0] += 1ULL;
-                    out_rejected_server[0] += 1ULL;
+                    out_rejected_arrivals[run_id] += 1ULL;
+                    out_rejected_server[run_id] += 1ULL;
                 }
             } else if (occupied_resource + demand > total_resource_r) {
                 if (current_time >= warmup_time && current_time <= max_time) {
-                    out_rejected_arrivals[0] += 1ULL;
-                    out_rejected_resource[0] += 1ULL;
+                    out_rejected_arrivals[run_id] += 1ULL;
+                    out_rejected_resource[run_id] += 1ULL;
                 }
             } else {
                 accepted = 1;
             }
 
             if (accepted) {
-                departure_times[active_count] = current_time + service_time_const;
+                double workload = sample_workload_value(
+                    &rng_state,
+                    workload_mode,
+                    workload_order,
+                    workload_mean,
+                    workload_p,
+                    workload_fast_mult
+                );
+                double service_time = workload / service_speed;
+                if (service_time < 0.0) {
+                    service_time = 0.0;
+                }
+                departure_times[active_count] = current_time + service_time;
                 arrival_times[active_count] = current_time;
                 resource_demands[active_count] = demand;
                 active_count += 1;
                 occupied_resource += demand;
 
                 if (current_time >= warmup_time && current_time <= max_time) {
-                    out_accepted_arrivals[0] += 1ULL;
+                    out_accepted_arrivals[run_id] += 1ULL;
                 }
             }
 
-            next_arrival_time = (arrival_rate > 0.0)
-                ? current_time + sample_exp(&rng_state, arrival_rate)
-                : INF_TIME;
+            double delta = sample_arrival_delta(
+                &rng_state,
+                arrival_mode,
+                arrival_order,
+                arrival_rate,
+                arrival_p,
+                arrival_fast_mult
+            );
+            next_arrival_time = (delta >= INF_TIME / 2.0) ? INF_TIME : (current_time + delta);
         } else {
             unsigned int i = 0;
             while (i < active_count) {
@@ -232,14 +336,14 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
                     double sojourn_time = service_time;
 
                     if (current_time >= warmup_time && current_time <= max_time) {
-                        out_completed_jobs[0] += 1ULL;
-                        out_completed_time_samples[0] += 1ULL;
+                        out_completed_jobs[run_id] += 1ULL;
+                        out_completed_time_samples[run_id] += 1ULL;
 
-                        out_service_time_sum[0] += service_time;
-                        out_service_time_sq_sum[0] += service_time * service_time;
+                        out_service_time_sum[run_id] += service_time;
+                        out_service_time_sq_sum[run_id] += service_time * service_time;
 
-                        out_sojourn_time_sum[0] += sojourn_time;
-                        out_sojourn_time_sq_sum[0] += sojourn_time * sojourn_time;
+                        out_sojourn_time_sum[run_id] += sojourn_time;
+                        out_sojourn_time_sq_sum[run_id] += sojourn_time * sojourn_time;
                     }
 
                     occupied_resource -= resource_demands[i];
@@ -287,21 +391,54 @@ impl GpuBackend {
             )));
         }
 
-        match scenario.arrival_spec {
-            ArrivalProcessSpec::Poisson => {}
-            _ => {
+        if let ArrivalProcessSpec::Erlang { order } = scenario.arrival_spec {
+            if order == 0 {
                 return Err(BackendError::Validation(
-                    "Текущая полноценная test-версия GPU backend пока поддерживает только arrival=poisson".to_string(),
+                    "arrival Erlang order должен быть > 0".to_string(),
                 ));
             }
         }
 
-        match scenario.workload_spec {
-            WorkloadDistributionSpec::Deterministic { .. } => {}
-            _ => {
+        if let ArrivalProcessSpec::Hyperexponential2 {
+            p,
+            fast_rate_multiplier,
+        } = scenario.arrival_spec
+        {
+            if !(0.0 < p && p < 1.0) {
+                return Err(BackendError::Validation(format!(
+                    "arrival HyperExp(2) требует p в (0,1), получено {p}"
+                )));
+            }
+            if fast_rate_multiplier <= 0.0 {
+                return Err(BackendError::Validation(format!(
+                    "arrival HyperExp(2) требует fast_rate_multiplier > 0, получено {fast_rate_multiplier}"
+                )));
+            }
+        }
+
+        if let WorkloadDistributionSpec::Erlang { order, .. } = scenario.workload_spec {
+            if order == 0 {
                 return Err(BackendError::Validation(
-                    "Текущая полноценная test-версия GPU backend пока поддерживает только workload=deterministic".to_string(),
+                    "workload Erlang order должен быть > 0".to_string(),
                 ));
+            }
+        }
+
+        if let WorkloadDistributionSpec::Hyperexponential2 {
+            p,
+            fast_rate_multiplier,
+            ..
+        } = scenario.workload_spec
+        {
+            if !(0.0 < p && p < 1.0) {
+                return Err(BackendError::Validation(format!(
+                    "workload HyperExp(2) требует p в (0,1), получено {p}"
+                )));
+            }
+            if fast_rate_multiplier <= 0.0 {
+                return Err(BackendError::Validation(format!(
+                    "workload HyperExp(2) требует fast_rate_multiplier > 0, получено {fast_rate_multiplier}"
+                )));
             }
         }
 
@@ -374,87 +511,148 @@ impl GpuBackend {
         out
     }
 
-    fn run_one_on_gpu(
+    fn arrival_params(spec: &ArrivalProcessSpec) -> (u32, u32, f64, f64) {
+        match spec {
+            ArrivalProcessSpec::Poisson => (0, 0, 0.5, 1.0),
+            ArrivalProcessSpec::Erlang { order } => (1, *order as u32, 0.5, 1.0),
+            ArrivalProcessSpec::Hyperexponential2 {
+                p,
+                fast_rate_multiplier,
+            } => (2, 0, *p, *fast_rate_multiplier),
+        }
+    }
+
+    fn workload_params(spec: &WorkloadDistributionSpec) -> (u32, u32, f64, f64, f64) {
+        match spec {
+            WorkloadDistributionSpec::Deterministic { mean, .. } => (0, 0, *mean, 0.5, 1.0),
+            WorkloadDistributionSpec::Exponential { mean, .. } => (1, 0, *mean, 0.5, 1.0),
+            WorkloadDistributionSpec::Erlang { mean, order, .. } => {
+                (2, *order as u32, *mean, 0.5, 1.0)
+            }
+            WorkloadDistributionSpec::Hyperexponential2 {
+                mean,
+                p,
+                fast_rate_multiplier,
+                ..
+            } => (3, 0, *mean, *p, *fast_rate_multiplier),
+        }
+    }
+
+    fn run_group_on_gpu(
         &self,
-        request: &RunRequest,
+        requests: &[RunRequest],
         ctx: &Arc<CudaContext>,
         kernel: &cudarc::driver::CudaFunction,
-    ) -> Result<RunSummary> {
-        self.validate_request(request)?;
-        let scenario = &request.scenario;
+    ) -> Result<Vec<RunSummary>> {
+        let first = requests
+            .first()
+            .ok_or_else(|| BackendError::Validation("Пустая группа GPU-запросов".to_string()))?;
+        self.validate_request(first)?;
+        let scenario = &first.scenario;
+        for request in requests {
+            self.validate_request(request)?;
+            if request.scenario.scenario_key != scenario.scenario_key {
+                return Err(BackendError::Validation(
+                    "GPU batched launch ожидает группу одинаковых сценариев".to_string(),
+                ));
+            }
+        }
+
+        let num_runs = requests.len();
+        let num_runs_u32 = num_runs as u32;
         let stream = ctx.default_stream();
 
         let resource_values = Self::padded_resource_values(&scenario.resource_distribution.values);
-        let resource_cdf = Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
+        let resource_cdf =
+            Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
 
-        let mean_workload = match scenario.workload_spec {
-            WorkloadDistributionSpec::Deterministic { mean, .. } => mean,
-            _ => unreachable!(),
-        };
+        let (arrival_mode, arrival_order, arrival_p, arrival_fast_mult) =
+            Self::arrival_params(&scenario.arrival_spec);
+        let (workload_mode, workload_order, workload_mean, workload_p, workload_fast_mult) =
+            Self::workload_params(&scenario.workload_spec);
 
-        let mut out_arrival_attempts = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let seed_host: Vec<u64> = requests.iter().map(|r| r.seed).collect();
+        let seed_dev = stream.clone_htod(&seed_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy seed vector failed: {:?}", e))
+        })?;
+
+        let mut out_arrival_attempts = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_arrival_attempts failed: {:?}", e))
         })?;
-        let mut out_accepted_arrivals = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_accepted_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_accepted_arrivals failed: {:?}", e))
         })?;
-        let mut out_rejected_arrivals = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_rejected_arrivals = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_arrivals failed: {:?}", e))
         })?;
-        let mut out_rejected_capacity = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_rejected_capacity = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_capacity failed: {:?}", e))
         })?;
-        let mut out_rejected_server = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_rejected_server = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_server failed: {:?}", e))
         })?;
-        let mut out_rejected_resource = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_rejected_resource = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_rejected_resource failed: {:?}", e))
         })?;
-        let mut out_completed_jobs = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_completed_jobs = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_completed_jobs failed: {:?}", e))
         })?;
-        let mut out_completed_time_samples = stream.alloc_zeros::<u64>(1).map_err(|e| {
+        let mut out_completed_time_samples = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_completed_time_samples failed: {:?}", e))
         })?;
 
-        let mut out_resource_time = stream.alloc_zeros::<f64>(1).map_err(|e| {
+        let mut out_resource_time = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_resource_time failed: {:?}", e))
         })?;
-        let mut out_service_time_sum = stream.alloc_zeros::<f64>(1).map_err(|e| {
+        let mut out_service_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_service_time_sum failed: {:?}", e))
         })?;
-        let mut out_service_time_sq_sum = stream.alloc_zeros::<f64>(1).map_err(|e| {
+        let mut out_service_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_service_time_sq_sum failed: {:?}", e))
         })?;
-        let mut out_sojourn_time_sum = stream.alloc_zeros::<f64>(1).map_err(|e| {
+        let mut out_sojourn_time_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_sojourn_time_sum failed: {:?}", e))
         })?;
-        let mut out_sojourn_time_sq_sum = stream.alloc_zeros::<f64>(1).map_err(|e| {
+        let mut out_sojourn_time_sq_sum = stream.alloc_zeros::<f64>(num_runs).map_err(|e| {
             BackendError::Validation(format!("alloc out_sojourn_time_sq_sum failed: {:?}", e))
         })?;
 
+        let state_stride = scenario.capacity_k + 1;
         let mut out_state_times =
-            stream.alloc_zeros::<f64>(scenario.capacity_k + 1).map_err(|e| {
-                BackendError::Validation(format!("alloc out_state_times failed: {:?}", e))
-            })?;
+            stream
+                .alloc_zeros::<f64>(state_stride * num_runs)
+                .map_err(|e| {
+                    BackendError::Validation(format!("alloc out_state_times failed: {:?}", e))
+                })?;
 
         let mut builder = stream.launch_builder(kernel);
 
-    let servers_n_u32 = scenario.servers_n as u32;
-    let capacity_k_u32 = scenario.capacity_k as u32;
-    let resource_len_u32 = scenario.resource_distribution.values.len() as u32;
+        let servers_n_u32 = scenario.servers_n as u32;
+        let capacity_k_u32 = scenario.capacity_k as u32;
+        let resource_len_u32 = scenario.resource_distribution.values.len() as u32;
 
-    builder.arg(&scenario.arrival_rate);
-    builder.arg(&scenario.service_speed);
-    builder.arg(&scenario.max_time);
-    builder.arg(&scenario.warmup_time);
-    builder.arg(&mean_workload);
-    builder.arg(&servers_n_u32);
-    builder.arg(&capacity_k_u32);
-    builder.arg(&scenario.total_resource_r);
-    builder.arg(&request.seed);
+        builder.arg(&num_runs_u32);
+        builder.arg(&scenario.arrival_rate);
+        builder.arg(&scenario.service_speed);
+        builder.arg(&scenario.max_time);
+        builder.arg(&scenario.warmup_time);
+        builder.arg(&servers_n_u32);
+        builder.arg(&capacity_k_u32);
+        builder.arg(&scenario.total_resource_r);
+        builder.arg(&seed_dev);
 
-    builder.arg(&resource_len_u32);
+        builder.arg(&arrival_mode);
+        builder.arg(&arrival_order);
+        builder.arg(&arrival_p);
+        builder.arg(&arrival_fast_mult);
+
+        builder.arg(&workload_mode);
+        builder.arg(&workload_order);
+        builder.arg(&workload_mean);
+        builder.arg(&workload_p);
+        builder.arg(&workload_fast_mult);
+
+        builder.arg(&resource_len_u32);
 
         builder.arg(&resource_values[0]);
         builder.arg(&resource_values[1]);
@@ -493,7 +691,7 @@ impl GpuBackend {
 
         unsafe {
             builder
-                .launch(LaunchConfig::for_num_elems(1))
+                .launch(LaunchConfig::for_num_elems(num_runs_u32))
                 .map_err(|e| {
                     BackendError::Validation(format!(
                         "Не удалось запустить simulate_loss_poisson_deterministic: {:?}",
@@ -504,120 +702,142 @@ impl GpuBackend {
 
         let arrival_attempts = stream.clone_dtoh(&out_arrival_attempts).map_err(|e| {
             BackendError::Validation(format!("dtoh arrival_attempts failed: {:?}", e))
-        })?[0];
+        })?;
         let accepted_arrivals = stream.clone_dtoh(&out_accepted_arrivals).map_err(|e| {
             BackendError::Validation(format!("dtoh accepted_arrivals failed: {:?}", e))
-        })?[0];
+        })?;
         let rejected_arrivals = stream.clone_dtoh(&out_rejected_arrivals).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_arrivals failed: {:?}", e))
-        })?[0];
+        })?;
         let rejected_capacity = stream.clone_dtoh(&out_rejected_capacity).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_capacity failed: {:?}", e))
-        })?[0];
+        })?;
         let rejected_server = stream.clone_dtoh(&out_rejected_server).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_server failed: {:?}", e))
-        })?[0];
+        })?;
         let rejected_resource = stream.clone_dtoh(&out_rejected_resource).map_err(|e| {
             BackendError::Validation(format!("dtoh rejected_resource failed: {:?}", e))
-        })?[0];
+        })?;
         let completed_jobs = stream.clone_dtoh(&out_completed_jobs).map_err(|e| {
             BackendError::Validation(format!("dtoh completed_jobs failed: {:?}", e))
-        })?[0];
-        let completed_time_samples = stream.clone_dtoh(&out_completed_time_samples).map_err(|e| {
-            BackendError::Validation(format!("dtoh completed_time_samples failed: {:?}", e))
-        })?[0];
+        })?;
+        let completed_time_samples =
+            stream
+                .clone_dtoh(&out_completed_time_samples)
+                .map_err(|e| {
+                    BackendError::Validation(format!("dtoh completed_time_samples failed: {:?}", e))
+                })?;
 
-        let resource_time = stream.clone_dtoh(&out_resource_time).map_err(|e| {
-            BackendError::Validation(format!("dtoh resource_time failed: {:?}", e))
-        })?[0];
+        let resource_time = stream
+            .clone_dtoh(&out_resource_time)
+            .map_err(|e| BackendError::Validation(format!("dtoh resource_time failed: {:?}", e)))?;
         let service_time_sum = stream.clone_dtoh(&out_service_time_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh service_time_sum failed: {:?}", e))
-        })?[0];
+        })?;
         let service_time_sq_sum = stream.clone_dtoh(&out_service_time_sq_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh service_time_sq_sum failed: {:?}", e))
-        })?[0];
+        })?;
         let sojourn_time_sum = stream.clone_dtoh(&out_sojourn_time_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh sojourn_time_sum failed: {:?}", e))
-        })?[0];
+        })?;
         let sojourn_time_sq_sum = stream.clone_dtoh(&out_sojourn_time_sq_sum).map_err(|e| {
             BackendError::Validation(format!("dtoh sojourn_time_sq_sum failed: {:?}", e))
-        })?[0];
-
-        let state_times = stream.clone_dtoh(&out_state_times).map_err(|e| {
-            BackendError::Validation(format!("dtoh state_times failed: {:?}", e))
         })?;
 
+        let state_times = stream
+            .clone_dtoh(&out_state_times)
+            .map_err(|e| BackendError::Validation(format!("dtoh state_times failed: {:?}", e)))?;
+
         let observed_time = scenario.max_time - scenario.warmup_time;
-        let pi_hat: Vec<f64> = state_times.iter().map(|x| *x / observed_time).collect();
+        let mut summaries = Vec::with_capacity(num_runs);
 
-        let mean_num_jobs = pi_hat
-            .iter()
-            .enumerate()
-            .map(|(k, p)| k as f64 * *p)
-            .sum::<f64>();
+        for run_id in 0..num_runs {
+            let state_offset = run_id * state_stride;
+            let pi_hat: Vec<f64> = state_times[state_offset..state_offset + state_stride]
+                .iter()
+                .map(|x| *x / observed_time)
+                .collect();
 
-        let mean_occupied_resource = resource_time / observed_time;
-        let loss_probability = if arrival_attempts > 0 {
-            rejected_arrivals as f64 / arrival_attempts as f64
-        } else {
-            0.0
-        };
-        let throughput = completed_jobs as f64 / observed_time;
+            let mean_num_jobs = pi_hat
+                .iter()
+                .enumerate()
+                .map(|(k, p)| k as f64 * *p)
+                .sum::<f64>();
 
-        let n = completed_time_samples as f64;
-        let mean_service_time = if n > 0.0 { service_time_sum / n } else { 0.0 };
-        let mean_sojourn_time = if n > 0.0 { sojourn_time_sum / n } else { 0.0 };
+            let mean_occupied_resource = resource_time[run_id] / observed_time;
+            let loss_probability = if arrival_attempts[run_id] > 0 {
+                rejected_arrivals[run_id] as f64 / arrival_attempts[run_id] as f64
+            } else {
+                0.0
+            };
+            let throughput = completed_jobs[run_id] as f64 / observed_time;
 
-        let std_service_time = if n > 0.0 {
-            ((service_time_sq_sum / n) - mean_service_time * mean_service_time)
-                .max(0.0)
-                .sqrt()
-        } else {
-            0.0
-        };
+            let n = completed_time_samples[run_id] as f64;
+            let mean_service_time = if n > 0.0 {
+                service_time_sum[run_id] / n
+            } else {
+                0.0
+            };
+            let mean_sojourn_time = if n > 0.0 {
+                sojourn_time_sum[run_id] / n
+            } else {
+                0.0
+            };
 
-        let std_sojourn_time = if n > 0.0 {
-            ((sojourn_time_sq_sum / n) - mean_sojourn_time * mean_sojourn_time)
-                .max(0.0)
-                .sqrt()
-        } else {
-            0.0
-        };
+            let std_service_time = if n > 0.0 {
+                ((service_time_sq_sum[run_id] / n) - mean_service_time * mean_service_time)
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                0.0
+            };
 
-        let summary = RunSummary {
-            scenario_key: scenario.scenario_key.clone(),
-            scenario_name: scenario.scenario_name.clone(),
-            replication_index: request.replication_index,
-            seed: request.seed,
+            let std_sojourn_time = if n > 0.0 {
+                ((sojourn_time_sq_sum[run_id] / n) - mean_sojourn_time * mean_sojourn_time)
+                    .max(0.0)
+                    .sqrt()
+            } else {
+                0.0
+            };
 
-            total_time: scenario.max_time,
-            warmup_time: scenario.warmup_time,
-            observed_time,
+            let request = &requests[run_id];
+            let summary = RunSummary {
+                scenario_key: scenario.scenario_key.clone(),
+                scenario_name: scenario.scenario_name.clone(),
+                replication_index: request.replication_index,
+                seed: request.seed,
 
-            arrival_attempts,
-            accepted_arrivals,
-            rejected_arrivals,
-            rejected_capacity,
-            rejected_server,
-            rejected_resource,
-            completed_jobs,
-            completed_time_samples,
+                total_time: scenario.max_time,
+                warmup_time: scenario.warmup_time,
+                observed_time,
 
-            mean_num_jobs,
-            mean_occupied_resource,
-            loss_probability,
-            throughput,
+                arrival_attempts: arrival_attempts[run_id],
+                accepted_arrivals: accepted_arrivals[run_id],
+                rejected_arrivals: rejected_arrivals[run_id],
+                rejected_capacity: rejected_capacity[run_id],
+                rejected_server: rejected_server[run_id],
+                rejected_resource: rejected_resource[run_id],
+                completed_jobs: completed_jobs[run_id],
+                completed_time_samples: completed_time_samples[run_id],
 
-            mean_service_time,
-            mean_sojourn_time,
-            std_service_time,
-            std_sojourn_time,
+                mean_num_jobs,
+                mean_occupied_resource,
+                loss_probability,
+                throughput,
 
-            pi_hat,
-        };
+                mean_service_time,
+                mean_sojourn_time,
+                std_service_time,
+                std_sojourn_time,
 
-        summary.validate()?;
-        Ok(summary)
+                pi_hat,
+            };
+
+            summary.validate()?;
+            summaries.push(summary);
+        }
+
+        Ok(summaries)
     }
 }
 
@@ -649,8 +869,21 @@ impl SimulationBackend for GpuBackend {
         let kernel = self.compile_and_load_kernel(&ctx)?;
 
         let mut out = Vec::with_capacity(requests.len());
-        for request in requests {
-            out.push(self.run_one_on_gpu(request, &ctx, &kernel)?);
+        let mut group_start = 0usize;
+        while group_start < requests.len() {
+            let scenario_key = &requests[group_start].scenario.scenario_key;
+            let mut group_end = group_start + 1;
+            while group_end < requests.len()
+                && requests[group_end].scenario.scenario_key == *scenario_key
+                && group_end - group_start < self.max_batch_size
+            {
+                group_end += 1;
+            }
+
+            let summaries =
+                self.run_group_on_gpu(&requests[group_start..group_end], &ctx, &kernel)?;
+            out.extend(summaries);
+            group_start = group_end;
         }
 
         eprintln!(
