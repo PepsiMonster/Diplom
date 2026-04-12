@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,20 @@ KERNEL_PTX = CUDA_DIR / "sim_kernel.ptx"
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
     print(">", " ".join(str(x) for x in cmd))
     subprocess.run(cmd, cwd=str(cwd or PROJECT_ROOT), check=True)
+
+
+def run_command_capture(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    print(">", " ".join(str(x) for x in cmd))
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd or PROJECT_ROOT),
+        text=True,
+        capture_output=True,
+    )
 
 
 def generate_experiment_json() -> Path:
@@ -48,16 +63,80 @@ def ensure_kernel_ptx() -> None:
         )
 
     print("PTX отсутствует или устарел. Пересобираю kernel...")
-    run_command(
-        [
-            nvcc,
-            "-ptx",
-            str(KERNEL_CU),
-            "-o",
-            str(KERNEL_PTX),
-        ],
-        cwd=PROJECT_ROOT,
+    base_cmd = [
+        nvcc,
+        "-ptx",
+        str(KERNEL_CU),
+        "-o",
+        str(KERNEL_PTX),
+    ]
+    result = run_command_capture(base_cmd, cwd=PROJECT_ROOT)
+    if result.returncode == 0:
+        return
+
+    stderr = (result.stderr or "").strip()
+    stdout = (result.stdout or "").strip()
+    cl_missing = "Cannot find compiler 'cl.exe' in PATH" in stderr
+
+    if platform.system().lower().startswith("win") and cl_missing:
+        vcvars = _find_vcvars64_bat()
+        if vcvars is not None:
+            print("Обнаружена ошибка cl.exe в PATH. Пробую запустить через vcvars64.bat ...")
+            cmdline = (
+                f'call "{vcvars}" && "{nvcc}" -ptx "{KERNEL_CU}" -o "{KERNEL_PTX}"'
+            )
+            wrapped = ["cmd.exe", "/d", "/s", "/c", cmdline]
+            retry = run_command_capture(wrapped, cwd=PROJECT_ROOT)
+            if retry.returncode == 0:
+                return
+            stderr = (retry.stderr or "").strip()
+            stdout = (retry.stdout or "").strip()
+
+    raise RuntimeError(
+        "Не удалось собрать PTX через nvcc.\n"
+        f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n\n"
+        "Подсказка: откройте 'x64 Native Tools Command Prompt for VS 2022' "
+        "или добавьте cl.exe/VC tools в PATH."
     )
+
+
+def _find_vcvars64_bat() -> Path | None:
+    env_path = os.environ.get("VCVARS64_BAT")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return p
+
+    vswhere_default = Path(
+        r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+    )
+    if not vswhere_default.exists():
+        return None
+
+    try:
+        out = subprocess.check_output(
+            [
+                str(vswhere_default),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ],
+            text=True,
+        ).strip()
+    except Exception:
+        return None
+
+    if not out:
+        return None
+
+    candidate = Path(out) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def list_existing_dirs(root: Path) -> set[Path]:
