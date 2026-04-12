@@ -381,6 +381,60 @@ def _suite_is_loss_only(suite_data: PlotSuiteData) -> bool:
     return len(queue_metrics & available) == 0
 
 
+def _slug_to_float(token: str) -> float:
+    return float(token.replace("_", "."))
+
+
+def _extract_scenario_axes(scenario_key: str) -> dict[str, Any] | None:
+    pattern = re.compile(
+        r".*__arr-(?P<arr>[a-z0-9_]+)__work-(?P<work>[a-z0-9_]+)__lam-(?P<lam>[0-9_]+)__sig-(?P<sig>[0-9_]+)$"
+    )
+    m = pattern.match(scenario_key)
+    if not m:
+        return None
+    return {
+        "arrival": m.group("arr"),
+        "workload": m.group("work"),
+        "lambda": _slug_to_float(m.group("lam")),
+        "sigma": _slug_to_float(m.group("sig")),
+    }
+
+
+def _extract_group_lambda_metric(
+    suite_data: PlotSuiteData,
+    metric_name: str,
+    group_by: str,
+) -> tuple[list[str], list[float], np.ndarray] | None:
+    records: list[tuple[str, float, float]] = []
+    for scenario_key in suite_data.scenario_keys():
+        axes = _extract_scenario_axes(scenario_key)
+        if axes is None:
+            continue
+        group_value = str(axes[group_by])
+        lam = float(axes["lambda"])
+        mean = float(_metric_summary(suite_data, scenario_key, metric_name)["mean"])
+        records.append((group_value, lam, mean))
+
+    if not records:
+        return None
+
+    groups = sorted({g for g, _, _ in records})
+    lambdas = sorted({lam for _, lam, _ in records})
+    if len(groups) < 2 or len(lambdas) < 2:
+        return None
+
+    matrix = np.full((len(groups), len(lambdas)), np.nan, dtype=float)
+    g_idx = {g: i for i, g in enumerate(groups)}
+    l_idx = {lam: j for j, lam in enumerate(lambdas)}
+
+    for g, lam, mean in records:
+        matrix[g_idx[g], l_idx[lam]] = mean
+
+    if np.isnan(matrix).all():
+        return None
+    return groups, lambdas, matrix
+
+
 # ============================================================================
 # ГРАФИКИ
 # ============================================================================
@@ -590,6 +644,72 @@ def plot_scenario_heatmap_pi(
     return _save_figure(fig, Path(output_dir) / filename, dpi=dpi)
 
 
+def plot_metric_lambda_lines_by_group(
+    suite_data: PlotSuiteData,
+    metric_name: str,
+    group_by: str,
+    output_dir: str | Path,
+    *,
+    dpi: int = 220,
+) -> Path | None:
+    extracted = _extract_group_lambda_metric(suite_data, metric_name, group_by)
+    if extracted is None:
+        return None
+
+    groups, lambdas, matrix = extracted
+    fig, ax = plt.subplots(figsize=(11.2, 6.0))
+
+    for i, group_name in enumerate(groups):
+        y = matrix[i, :]
+        mask = np.isfinite(y)
+        if not np.any(mask):
+            continue
+        ax.plot(
+            np.asarray(lambdas)[mask],
+            y[mask],
+            marker="o",
+            linewidth=2.0,
+            label=f"{group_by}={group_name}",
+        )
+
+    ax.set_xlabel("λ (arrival_rate)")
+    ax.set_ylabel(_metric_ylabel(metric_name))
+    ax.set_title(f"{_metric_display_name(metric_name)}: сдвиг по λ для разных {group_by}")
+    ax.grid(alpha=0.25)
+    ax.legend(ncol=2)
+
+    filename = f"lambda_lines_{_sanitize_filename(group_by)}_{_sanitize_filename(metric_name)}.png"
+    return _save_figure(fig, Path(output_dir) / filename, dpi=dpi)
+
+
+def plot_metric_lambda_heatmap_by_group(
+    suite_data: PlotSuiteData,
+    metric_name: str,
+    group_by: str,
+    output_dir: str | Path,
+    *,
+    dpi: int = 220,
+) -> Path | None:
+    extracted = _extract_group_lambda_metric(suite_data, metric_name, group_by)
+    if extracted is None:
+        return None
+
+    groups, lambdas, matrix = extracted
+    fig, ax = plt.subplots(figsize=(11.2, 6.0))
+    im = ax.imshow(matrix, aspect="auto", interpolation="nearest")
+    ax.set_yticks(np.arange(len(groups)))
+    ax.set_yticklabels(groups)
+    ax.set_xticks(np.arange(len(lambdas)))
+    ax.set_xticklabels([f"{lam:.2f}" for lam in lambdas], rotation=35, ha="right")
+    ax.set_xlabel("λ (arrival_rate)")
+    ax.set_ylabel(group_by)
+    ax.set_title(f"Heatmap: {_metric_display_name(metric_name)} (ось λ × {group_by})")
+    fig.colorbar(im, ax=ax)
+
+    filename = f"lambda_heatmap_{_sanitize_filename(group_by)}_{_sanitize_filename(metric_name)}.png"
+    return _save_figure(fig, Path(output_dir) / filename, dpi=dpi)
+
+
 # ============================================================================
 # ПОЛНЫЙ НАБОР ГРАФИКОВ
 # ============================================================================
@@ -686,6 +806,32 @@ def generate_standard_plots(
     rejection_metrics = {"rejected_capacity", "rejected_server", "rejected_resource"}
     if rejection_metrics.issubset(available):
         created.append(plot_rejection_breakdown(suite_data, out_dir, dpi=dpi))
+
+    scenario_axes = [_extract_scenario_axes(k) for k in suite_data.scenario_keys()]
+    has_axis_data = any(ax is not None for ax in scenario_axes)
+    if has_axis_data:
+        metric_candidates = [m for m in ("loss_probability", "throughput", "mean_num_jobs") if m in available]
+        for metric_name in metric_candidates:
+            for group_by in ("workload", "arrival"):
+                line_plot = plot_metric_lambda_lines_by_group(
+                    suite_data,
+                    metric_name,
+                    group_by,
+                    out_dir,
+                    dpi=dpi,
+                )
+                if line_plot is not None:
+                    created.append(line_plot)
+
+                heatmap_plot = plot_metric_lambda_heatmap_by_group(
+                    suite_data,
+                    metric_name,
+                    group_by,
+                    out_dir,
+                    dpi=dpi,
+                )
+                if heatmap_plot is not None:
+                    created.append(heatmap_plot)
 
     return created
 
