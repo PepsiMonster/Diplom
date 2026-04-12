@@ -202,6 +202,8 @@ def run_rust_full(
     gpu_block_size: int | None,
     gpu_save_pi_hat: bool,
     verbose: bool,
+    compact_summary: bool,
+    compute_only: bool,
 ) -> float:
     cmd = ["cargo", "run"]
     if not verbose:
@@ -241,6 +243,10 @@ def run_rust_full(
         cmd.extend(["--max-time", str(max_time)])
     if warmup_time is not None:
         cmd.extend(["--warmup-time", str(warmup_time)])
+    if compact_summary:
+        cmd.append("--compact-summary")
+    if compute_only:
+        cmd.append("--compute-only")
 
     env = None
     if backend == "gpu":
@@ -416,6 +422,16 @@ def main() -> None:
         action="store_true",
         help="Печатать полный вывод cargo/rustc (включая предупреждения)",
     )
+    parser.add_argument(
+        "--full-summary",
+        action="store_true",
+        help="Печатать полный suite summary (по умолчанию — компактный вывод)",
+    )
+    parser.add_argument(
+        "--compute-only",
+        action="store_true",
+        help="Не сохранять выходные CSV/JSON/TXT (режим speed benchmark)",
+    )
 
     args = parser.parse_args()
 
@@ -466,6 +482,8 @@ def main() -> None:
                 gpu_block_size=args.gpu_block_size,
                 gpu_save_pi_hat=not args.gpu_no_pi_hat,
                 verbose=args.verbose,
+                compact_summary=not args.full_summary,
+                compute_only=args.compute_only,
             )
         except subprocess.CalledProcessError as e:
             print(
@@ -514,9 +532,17 @@ def main() -> None:
         gpu_block_size=args.gpu_block_size,
         gpu_save_pi_hat=not args.gpu_no_pi_hat,
         verbose=args.verbose,
+        compact_summary=not args.full_summary,
+        compute_only=args.compute_only,
     )
     print(f"Rust pipeline elapsed: {run_elapsed:.1f} sec ({run_elapsed/60.0:.1f} min)")
     print()
+
+    if args.compute_only:
+        print("Шаг 3/4 и 4/4 пропущены: включён режим --compute-only.")
+        print()
+        print("Готово (compute-only).")
+        return
 
     print("Шаг 3/4: Поиск созданной папки результатов...")
     suite_output_dir = find_latest_output_dir(output_root, before_dirs)

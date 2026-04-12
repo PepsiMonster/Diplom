@@ -65,6 +65,8 @@ fn handle_suite(args: SuiteArgs) -> Result<()> {
         args.ci_level,
         &save_options,
         false,
+        args.compact_summary,
+        false,
     )
 }
 
@@ -81,6 +83,8 @@ fn handle_full(args: FullArgs) -> Result<()> {
         args.ci_level,
         &save_options,
         true,
+        args.compact_summary,
+        args.compute_only,
     )
 }
 
@@ -90,6 +94,8 @@ fn run_suite_like(
     ci_level: f64,
     save_options: &SaveOptions,
     is_full_mode: bool,
+    compact_summary: bool,
+    compute_only: bool,
 ) -> Result<()> {
     let started_at = Instant::now();
 
@@ -119,13 +125,23 @@ fn run_suite_like(
     let sim_elapsed = sim_started.elapsed();
 
     let summary_started = Instant::now();
-    println!("{}", render_suite_summary_text(&suite_result, None));
+    if compact_summary || suite_result.scenario_results.len() > 6 {
+        println!("{}", render_compact_suite_summary(&suite_result));
+    } else {
+        println!("{}", render_suite_summary_text(&suite_result, None));
+    }
     let summary_elapsed = summary_started.elapsed();
 
     let save_started = Instant::now();
-    let artifacts = save_suite_result(&suite_result, &common.output_root, save_options)?;
-    let save_elapsed = save_started.elapsed();
-    print_artifacts(&artifacts);
+    let save_elapsed;
+    if compute_only {
+        save_elapsed = save_started.elapsed();
+        println!("Режим compute-only: сохранение артефактов на диск пропущено.");
+    } else {
+        let artifacts = save_suite_result(&suite_result, &common.output_root, save_options)?;
+        save_elapsed = save_started.elapsed();
+        print_artifacts(&artifacts);
+    }
 
     if is_full_mode {
         println!("Full pipeline завершён успешно.");
@@ -138,6 +154,15 @@ fn run_suite_like(
     println!("Общее время run_suite_like: {:.2?}", started_at.elapsed());
 
     Ok(())
+}
+
+fn render_compact_suite_summary(suite_result: &crate::stats::ExperimentSuiteResult) -> String {
+    format!(
+        "SUITE '{}' | scenarios={} | ci_level={}",
+        suite_result.suite_name,
+        suite_result.scenario_results.len(),
+        suite_result.ci_level
+    )
 }
 
 fn load_effective_config(common: &CommonArgs) -> Result<ExperimentConfig> {

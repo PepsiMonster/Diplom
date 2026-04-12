@@ -1,7 +1,8 @@
 use super::{BackendError, Result, RunRequest, SimulationBackend};
 use crate::params::{ArrivalProcessSpec, WorkloadDistributionSpec};
 use crate::stats::RunSummary;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use cudarc::{
     driver::{CudaContext, LaunchConfig, PushKernelArg},
@@ -10,11 +11,26 @@ use cudarc::{
 
 const GPU_KERNEL_PTX_PATH: &str = "cuda/sim_kernel.ptx";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone, Copy)]
+struct GpuTimingBreakdown {
+    setup_context: Duration,
+    kernel: Duration,
+    dtoh: Duration,
+    summary: Duration,
+}
+
+#[derive(Debug)]
+struct GpuRuntime {
+    ctx: Arc<CudaContext>,
+    kernel: cudarc::driver::CudaFunction,
+}
+
+#[derive(Debug)]
 pub struct GpuBackend {
     pub max_batch_size: usize,
     pub block_size: u32,
     pub save_pi_hat: bool,
+    runtime: Mutex<Option<GpuRuntime>>,
 }
 
 impl GpuBackend {
@@ -37,6 +53,7 @@ impl GpuBackend {
             max_batch_size: 65_536,
             block_size,
             save_pi_hat,
+            runtime: Mutex::new(None),
         })
     }
 
@@ -148,6 +165,36 @@ impl GpuBackend {
             })
     }
 
+    fn get_or_init_runtime(
+        &self,
+    ) -> Result<(Arc<CudaContext>, cudarc::driver::CudaFunction, Duration)> {
+        let started = Instant::now();
+        let mut guard = self.runtime.lock().map_err(|_| {
+            BackendError::Validation("Не удалось захватить lock runtime GPU backend".to_string())
+        })?;
+
+        if guard.is_none() {
+            let ctx = CudaContext::new(0).map_err(|e| {
+                BackendError::Validation(format!(
+                    "Не удалось создать CUDA context на device 0: {:?}",
+                    e
+                ))
+            })?;
+            let kernel = self.compile_and_load_kernel(&ctx)?;
+            *guard = Some(GpuRuntime { ctx, kernel });
+        }
+
+        let runtime = guard.as_ref().ok_or_else(|| {
+            BackendError::Validation("GPU runtime не инициализирован".to_string())
+        })?;
+
+        Ok((
+            runtime.ctx.clone(),
+            runtime.kernel.clone(),
+            started.elapsed(),
+        ))
+    }
+
     fn cumulative_resource_cdf(probabilities: &[f64]) -> [f64; 8] {
         let mut cdf = [1.0_f64; 8];
         let mut acc = 0.0_f64;
@@ -204,7 +251,8 @@ impl GpuBackend {
         requests: &[RunRequest],
         ctx: &Arc<CudaContext>,
         kernel: &cudarc::driver::CudaFunction,
-    ) -> Result<Vec<RunSummary>> {
+    ) -> Result<(Vec<RunSummary>, GpuTimingBreakdown)> {
+        let mut timings = GpuTimingBreakdown::default();
         let first = requests
             .first()
             .ok_or_else(|| BackendError::Validation("Пустая группа GPU-запросов".to_string()))?;
@@ -352,6 +400,7 @@ impl GpuBackend {
 
         builder.arg(&mut out_state_times);
 
+        let kernel_started = Instant::now();
         unsafe {
             builder
                 .launch(LaunchConfig {
@@ -366,7 +415,9 @@ impl GpuBackend {
                     ))
                 })?;
         }
+        timings.kernel += kernel_started.elapsed();
 
+        let dtoh_started = Instant::now();
         let arrival_attempts = stream.clone_dtoh(&out_arrival_attempts).map_err(|e| {
             BackendError::Validation(format!("dtoh arrival_attempts failed: {:?}", e))
         })?;
@@ -414,9 +465,11 @@ impl GpuBackend {
         let state_times = stream
             .clone_dtoh(&out_state_times)
             .map_err(|e| BackendError::Validation(format!("dtoh state_times failed: {:?}", e)))?;
+        timings.dtoh += dtoh_started.elapsed();
 
         let observed_time = scenario.max_time - scenario.warmup_time;
         let mut summaries = Vec::with_capacity(num_runs);
+        let summary_started = Instant::now();
 
         for run_id in 0..num_runs {
             let state_offset = run_id * state_stride;
@@ -506,8 +559,9 @@ impl GpuBackend {
             summary.validate()?;
             summaries.push(summary);
         }
+        timings.summary += summary_started.elapsed();
 
-        Ok(summaries)
+        Ok((summaries, timings))
     }
 }
 
@@ -529,14 +583,11 @@ impl SimulationBackend for GpuBackend {
             )));
         }
 
-        let ctx = CudaContext::new(0).map_err(|e| {
-            BackendError::Validation(format!(
-                "Не удалось создать CUDA context на device 0: {:?}",
-                e
-            ))
-        })?;
-
-        let kernel = self.compile_and_load_kernel(&ctx)?;
+        let (ctx, kernel, setup_elapsed) = self.get_or_init_runtime()?;
+        let mut total_timings = GpuTimingBreakdown {
+            setup_context: setup_elapsed,
+            ..GpuTimingBreakdown::default()
+        };
         let mut out = Vec::with_capacity(requests.len());
         let mut group_start = 0usize;
         while group_start < requests.len() {
@@ -549,16 +600,21 @@ impl SimulationBackend for GpuBackend {
                 group_end += 1;
             }
 
-            let summaries =
+            let (summaries, timings) =
                 self.run_group_on_gpu(&requests[group_start..group_end], &ctx, &kernel)?;
             out.extend(summaries);
+            total_timings.kernel += timings.kernel;
+            total_timings.dtoh += timings.dtoh;
+            total_timings.summary += timings.summary;
             group_start = group_end;
         }
 
-        eprintln!(
-            "GPU real test backend finished: {} run(s) executed on CUDA device.",
-            out.len()
-        );
+        eprintln!("GPU timing breakdown:");
+        eprintln!("  setup/context: {:.2?}", total_timings.setup_context);
+        eprintln!("  kernel:        {:.2?}", total_timings.kernel);
+        eprintln!("  dtoh:          {:.2?}", total_timings.dtoh);
+        eprintln!("  summary:       {:.2?}", total_timings.summary);
+        eprintln!("GPU backend finished: {} run(s) executed.", out.len());
 
         Ok(out)
     }

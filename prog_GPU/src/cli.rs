@@ -81,6 +81,14 @@ pub struct FullArgs {
     /// Сохранить агрегированные таблицы по сценариям.
     #[arg(long, default_value_t = true)]
     pub save_metric_tables: bool,
+
+    /// Не сохранять артефакты на диск (режим compute-only для бенчмарков).
+    #[arg(long, default_value_t = false)]
+    pub compute_only: bool,
+
+    /// Печатать только краткий suite summary (без длинного вывода по сценариям).
+    #[arg(long, default_value_t = false)]
+    pub compact_summary: bool,
 }
 
 /// Только проверка конфигурации и печать краткой сводки без запуска экспериментов.
@@ -109,6 +117,10 @@ pub struct SuiteArgs {
 
     #[arg(long, default_value_t = 0.95)]
     pub ci_level: f64,
+
+    /// Печатать только краткий suite summary (без длинного вывода по сценариям).
+    #[arg(long, default_value_t = false)]
+    pub compact_summary: bool,
 }
 
 /// Аргументы верхнего уровня CLI.

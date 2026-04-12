@@ -9,7 +9,6 @@ use crate::stats::{
 };
 use chrono::Local;
 use std::collections::BTreeMap;
-use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -113,24 +112,7 @@ pub fn execute_experiment_plan(
     backend: &dyn SimulationBackend,
     ci_level: f64,
 ) -> Result<ExperimentSuiteResult> {
-    let mut run_summaries: Vec<RunSummary> = Vec::with_capacity(plan.run_requests.len());
-
-    let mut i = 0usize;
-    while i < plan.run_requests.len() {
-        let scenario_key = &plan.run_requests[i].scenario.scenario_key;
-        let mut j = i + 1;
-        while j < plan.run_requests.len()
-            && plan.run_requests[j].scenario.scenario_key == *scenario_key
-        {
-            j += 1;
-        }
-
-        let group = &plan.run_requests[i..j];
-        let partial = backend.execute_batch(group)?;
-        run_summaries.extend(partial);
-
-        i = j;
-    }
+    let run_summaries: Vec<RunSummary> = backend.execute_batch(&plan.run_requests)?;
 
     assemble_suite_result(
         &plan.suite_name,
