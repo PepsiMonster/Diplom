@@ -105,20 +105,10 @@ __device__ __forceinline__ double overlap_len(double a0, double a1, double b0, d
 __device__ __forceinline__ unsigned int sample_resource(
     unsigned long long* state,
     unsigned int resource_len,
-    unsigned int rv0, unsigned int rv1, unsigned int rv2, unsigned int rv3,
-    unsigned int rv4, unsigned int rv5, unsigned int rv6, unsigned int rv7,
-    double c0, double c1, double c2, double c3, double c4, double c5, double c6, double c7
+    const unsigned int* values,
+    const double* cdf
 ) {
     double u = uniform01(state);
-
-    unsigned int values[RESOURCE_CHOICES];
-    double cdf[RESOURCE_CHOICES];
-
-    values[0] = rv0; values[1] = rv1; values[2] = rv2; values[3] = rv3;
-    values[4] = rv4; values[5] = rv5; values[6] = rv6; values[7] = rv7;
-
-    cdf[0] = c0; cdf[1] = c1; cdf[2] = c2; cdf[3] = c3;
-    cdf[4] = c4; cdf[5] = c5; cdf[6] = c6; cdf[7] = c7;
 
     for (unsigned int i = 0; i < resource_len; ++i) {
         if (u <= cdf[i]) {
@@ -131,32 +121,32 @@ __device__ __forceinline__ unsigned int sample_resource(
 
 extern "C" __global__ void simulate_loss_poisson_deterministic(
     unsigned int num_runs,
-    double arrival_rate,
-    double service_speed,
-    double max_time,
-    double warmup_time,
-    unsigned int servers_n,
-    unsigned int capacity_k,
-    unsigned int total_resource_r,
+    const double* arrival_rate,
+    const double* service_speed,
+    const double* max_time,
+    const double* warmup_time,
+    const unsigned int* servers_n,
+    const unsigned int* capacity_k,
+    const unsigned int* total_resource_r,
     const unsigned long long* seeds,
 
-    unsigned int arrival_mode,
-    unsigned int arrival_order,
-    double arrival_p,
-    double arrival_fast_mult,
+    const unsigned int* arrival_mode,
+    const unsigned int* arrival_order,
+    const double* arrival_p,
+    const double* arrival_fast_mult,
 
-    unsigned int workload_mode,
-    unsigned int workload_order,
-    double workload_mean,
-    double workload_p,
-    double workload_fast_mult,
+    const unsigned int* workload_mode,
+    const unsigned int* workload_order,
+    const double* workload_mean,
+    const double* workload_p,
+    const double* workload_fast_mult,
 
     unsigned int collect_state_times,
+    unsigned int state_stride,
 
-    unsigned int resource_len,
-    unsigned int rv0, unsigned int rv1, unsigned int rv2, unsigned int rv3,
-    unsigned int rv4, unsigned int rv5, unsigned int rv6, unsigned int rv7,
-    double c0, double c1, double c2, double c3, double c4, double c5, double c6, double c7,
+    const unsigned int* resource_len,
+    const unsigned int* resource_values,
+    const double* resource_cdf,
 
     unsigned long long* out_arrival_attempts,
     unsigned long long* out_accepted_arrivals,
@@ -180,14 +170,32 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
         return;
     }
 
-    if (capacity_k > MAX_CAPACITY) {
+    unsigned int run_capacity_k = capacity_k[run_id];
+    if (run_capacity_k > MAX_CAPACITY) {
         return;
     }
+    unsigned int run_servers_n = servers_n[run_id];
+    unsigned int run_total_resource_r = total_resource_r[run_id];
+    unsigned int run_arrival_mode = arrival_mode[run_id];
+    unsigned int run_arrival_order = arrival_order[run_id];
+    double run_arrival_rate = arrival_rate[run_id];
+    double run_arrival_p = arrival_p[run_id];
+    double run_arrival_fast_mult = arrival_fast_mult[run_id];
+    unsigned int run_workload_mode = workload_mode[run_id];
+    unsigned int run_workload_order = workload_order[run_id];
+    double run_workload_mean = workload_mean[run_id];
+    double run_workload_p = workload_p[run_id];
+    double run_workload_fast_mult = workload_fast_mult[run_id];
+    double run_max_time = max_time[run_id];
+    double run_warmup_time = warmup_time[run_id];
+    unsigned int run_resource_len = resource_len[run_id];
+    const unsigned int* run_resource_values = resource_values + run_id * RESOURCE_CHOICES;
+    const double* run_resource_cdf = resource_cdf + run_id * RESOURCE_CHOICES;
 
-    unsigned int state_offset = run_id * (capacity_k + 1);
+    unsigned int state_offset = run_id * state_stride;
 
     if (collect_state_times != 0u) {
-        for (unsigned int k = 0; k <= capacity_k; ++k) {
+        for (unsigned int k = 0; k <= run_capacity_k; ++k) {
             out_state_times[state_offset + k] = 0.0;
         }
     }
@@ -212,11 +220,11 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
     double current_time = 0.0;
     double next_arrival_time = sample_arrival_delta(
         &rng_state,
-        arrival_mode,
-        arrival_order,
-        arrival_rate,
-        arrival_p,
-        arrival_fast_mult
+        run_arrival_mode,
+        run_arrival_order,
+        run_arrival_rate,
+        run_arrival_p,
+        run_arrival_fast_mult
     );
 
     double departure_times[MAX_CAPACITY];
@@ -226,7 +234,7 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
     unsigned int active_count = 0;
     unsigned int occupied_resource = 0;
 
-    while (current_time < max_time) {
+    while (current_time < run_max_time) {
         double next_departure_time = INF_TIME;
 
         for (unsigned int i = 0; i < active_count; ++i) {
@@ -239,11 +247,11 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
         if (next_departure_time < next_event_time) {
             next_event_time = next_departure_time;
         }
-        if (max_time < next_event_time) {
-            next_event_time = max_time;
+        if (run_max_time < next_event_time) {
+            next_event_time = run_max_time;
         }
 
-        double overlap = overlap_len(current_time, next_event_time, warmup_time, max_time);
+        double overlap = overlap_len(current_time, next_event_time, run_warmup_time, run_max_time);
         if (overlap > 0.0) {
             if (collect_state_times != 0u) {
                 out_state_times[state_offset + active_count] += overlap;
@@ -252,38 +260,38 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
         }
 
         current_time = next_event_time;
-        if (current_time >= max_time - 1.0e-12) {
+        if (current_time >= run_max_time - 1.0e-12) {
             break;
         }
 
         int arrival_happened = (next_arrival_time <= next_departure_time + 1.0e-12);
 
         if (arrival_happened) {
-            if (current_time >= warmup_time && current_time <= max_time) {
+            if (current_time >= run_warmup_time && current_time <= run_max_time) {
                 out_arrival_attempts[run_id] += 1ULL;
             }
 
             unsigned int demand = sample_resource(
                 &rng_state,
-                resource_len,
-                rv0, rv1, rv2, rv3, rv4, rv5, rv6, rv7,
-                c0, c1, c2, c3, c4, c5, c6, c7
+                run_resource_len,
+                run_resource_values,
+                run_resource_cdf
             );
 
             int accepted = 0;
 
-            if (active_count >= capacity_k) {
-                if (current_time >= warmup_time && current_time <= max_time) {
+            if (active_count >= run_capacity_k) {
+                if (current_time >= run_warmup_time && current_time <= run_max_time) {
                     out_rejected_arrivals[run_id] += 1ULL;
                     out_rejected_capacity[run_id] += 1ULL;
                 }
-            } else if (active_count >= servers_n) {
-                if (current_time >= warmup_time && current_time <= max_time) {
+            } else if (active_count >= run_servers_n) {
+                if (current_time >= run_warmup_time && current_time <= run_max_time) {
                     out_rejected_arrivals[run_id] += 1ULL;
                     out_rejected_server[run_id] += 1ULL;
                 }
-            } else if (occupied_resource + demand > total_resource_r) {
-                if (current_time >= warmup_time && current_time <= max_time) {
+            } else if (occupied_resource + demand > run_total_resource_r) {
+                if (current_time >= run_warmup_time && current_time <= run_max_time) {
                     out_rejected_arrivals[run_id] += 1ULL;
                     out_rejected_resource[run_id] += 1ULL;
                 }
@@ -294,13 +302,13 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
             if (accepted) {
                 double workload = sample_workload_value(
                     &rng_state,
-                    workload_mode,
-                    workload_order,
-                    workload_mean,
-                    workload_p,
-                    workload_fast_mult
+                    run_workload_mode,
+                    run_workload_order,
+                    run_workload_mean,
+                    run_workload_p,
+                    run_workload_fast_mult
                 );
-                double service_time = workload / service_speed;
+                double service_time = workload / service_speed[run_id];
                 if (service_time < 0.0) {
                     service_time = 0.0;
                 }
@@ -310,18 +318,18 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
                 active_count += 1;
                 occupied_resource += demand;
 
-                if (current_time >= warmup_time && current_time <= max_time) {
+                if (current_time >= run_warmup_time && current_time <= run_max_time) {
                     out_accepted_arrivals[run_id] += 1ULL;
                 }
             }
 
             double delta = sample_arrival_delta(
                 &rng_state,
-                arrival_mode,
-                arrival_order,
-                arrival_rate,
-                arrival_p,
-                arrival_fast_mult
+                run_arrival_mode,
+                run_arrival_order,
+                run_arrival_rate,
+                run_arrival_p,
+                run_arrival_fast_mult
             );
             next_arrival_time = (delta >= INF_TIME / 2.0) ? INF_TIME : (current_time + delta);
         } else {
@@ -331,7 +339,7 @@ extern "C" __global__ void simulate_loss_poisson_deterministic(
                     double service_time = departure_times[i] - arrival_times[i];
                     double sojourn_time = service_time;
 
-                    if (current_time >= warmup_time && current_time <= max_time) {
+                    if (current_time >= run_warmup_time && current_time <= run_max_time) {
                         out_completed_jobs[run_id] += 1ULL;
                         out_completed_time_samples[run_id] += 1ULL;
 

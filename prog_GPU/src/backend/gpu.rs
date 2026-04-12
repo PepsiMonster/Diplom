@@ -253,36 +253,129 @@ impl GpuBackend {
         kernel: &cudarc::driver::CudaFunction,
     ) -> Result<(Vec<RunSummary>, GpuTimingBreakdown)> {
         let mut timings = GpuTimingBreakdown::default();
-        let first = requests
+        requests
             .first()
             .ok_or_else(|| BackendError::Validation("Пустая группа GPU-запросов".to_string()))?;
-        self.validate_request(first)?;
-        let scenario = &first.scenario;
         for request in requests {
             self.validate_request(request)?;
-            if request.scenario.scenario_key != scenario.scenario_key {
-                return Err(BackendError::Validation(
-                    "GPU batched launch ожидает группу одинаковых сценариев".to_string(),
-                ));
-            }
         }
 
         let num_runs = requests.len();
         let num_runs_u32 = num_runs as u32;
         let stream = ctx.default_stream();
 
-        let resource_values = Self::padded_resource_values(&scenario.resource_distribution.values);
-        let resource_cdf =
-            Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
+        let mut arrival_rate_host = Vec::with_capacity(num_runs);
+        let mut service_speed_host = Vec::with_capacity(num_runs);
+        let mut max_time_host = Vec::with_capacity(num_runs);
+        let mut warmup_time_host = Vec::with_capacity(num_runs);
+        let mut servers_n_host = Vec::with_capacity(num_runs);
+        let mut capacity_k_host = Vec::with_capacity(num_runs);
+        let mut total_resource_r_host = Vec::with_capacity(num_runs);
+        let mut arrival_mode_host = Vec::with_capacity(num_runs);
+        let mut arrival_order_host = Vec::with_capacity(num_runs);
+        let mut arrival_p_host = Vec::with_capacity(num_runs);
+        let mut arrival_fast_mult_host = Vec::with_capacity(num_runs);
+        let mut workload_mode_host = Vec::with_capacity(num_runs);
+        let mut workload_order_host = Vec::with_capacity(num_runs);
+        let mut workload_mean_host = Vec::with_capacity(num_runs);
+        let mut workload_p_host = Vec::with_capacity(num_runs);
+        let mut workload_fast_mult_host = Vec::with_capacity(num_runs);
+        let mut resource_len_host = Vec::with_capacity(num_runs);
+        let mut resource_values_host = Vec::with_capacity(num_runs * 8);
+        let mut resource_cdf_host = Vec::with_capacity(num_runs * 8);
 
-        let (arrival_mode, arrival_order, arrival_p, arrival_fast_mult) =
-            Self::arrival_params(&scenario.arrival_spec);
-        let (workload_mode, workload_order, workload_mean, workload_p, workload_fast_mult) =
-            Self::workload_params(&scenario.workload_spec);
+        for request in requests {
+            let scenario = &request.scenario;
+            let (arrival_mode, arrival_order, arrival_p, arrival_fast_mult) =
+                Self::arrival_params(&scenario.arrival_spec);
+            let (workload_mode, workload_order, workload_mean, workload_p, workload_fast_mult) =
+                Self::workload_params(&scenario.workload_spec);
+            let resource_values =
+                Self::padded_resource_values(&scenario.resource_distribution.values);
+            let resource_cdf =
+                Self::cumulative_resource_cdf(&scenario.resource_distribution.probabilities);
+
+            arrival_rate_host.push(scenario.arrival_rate);
+            service_speed_host.push(scenario.service_speed);
+            max_time_host.push(scenario.max_time);
+            warmup_time_host.push(scenario.warmup_time);
+            servers_n_host.push(scenario.servers_n as u32);
+            capacity_k_host.push(scenario.capacity_k as u32);
+            total_resource_r_host.push(scenario.total_resource_r);
+            arrival_mode_host.push(arrival_mode);
+            arrival_order_host.push(arrival_order);
+            arrival_p_host.push(arrival_p);
+            arrival_fast_mult_host.push(arrival_fast_mult);
+            workload_mode_host.push(workload_mode);
+            workload_order_host.push(workload_order);
+            workload_mean_host.push(workload_mean);
+            workload_p_host.push(workload_p);
+            workload_fast_mult_host.push(workload_fast_mult);
+            resource_len_host.push(scenario.resource_distribution.values.len() as u32);
+            resource_values_host.extend_from_slice(&resource_values);
+            resource_cdf_host.extend_from_slice(&resource_cdf);
+        }
 
         let seed_host: Vec<u64> = requests.iter().map(|r| r.seed).collect();
         let seed_dev = stream.clone_htod(&seed_host).map_err(|e| {
             BackendError::Validation(format!("alloc/copy seed vector failed: {:?}", e))
+        })?;
+        let arrival_rate_dev = stream.clone_htod(&arrival_rate_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy arrival_rate failed: {:?}", e))
+        })?;
+        let service_speed_dev = stream.clone_htod(&service_speed_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy service_speed failed: {:?}", e))
+        })?;
+        let max_time_dev = stream.clone_htod(&max_time_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy max_time failed: {:?}", e))
+        })?;
+        let warmup_time_dev = stream.clone_htod(&warmup_time_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy warmup_time failed: {:?}", e))
+        })?;
+        let servers_n_dev = stream.clone_htod(&servers_n_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy servers_n failed: {:?}", e))
+        })?;
+        let capacity_k_dev = stream.clone_htod(&capacity_k_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy capacity_k failed: {:?}", e))
+        })?;
+        let total_resource_r_dev = stream.clone_htod(&total_resource_r_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy total_resource_r failed: {:?}", e))
+        })?;
+        let arrival_mode_dev = stream.clone_htod(&arrival_mode_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy arrival_mode failed: {:?}", e))
+        })?;
+        let arrival_order_dev = stream.clone_htod(&arrival_order_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy arrival_order failed: {:?}", e))
+        })?;
+        let arrival_p_dev = stream.clone_htod(&arrival_p_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy arrival_p failed: {:?}", e))
+        })?;
+        let arrival_fast_mult_dev = stream.clone_htod(&arrival_fast_mult_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy arrival_fast_mult failed: {:?}", e))
+        })?;
+        let workload_mode_dev = stream.clone_htod(&workload_mode_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy workload_mode failed: {:?}", e))
+        })?;
+        let workload_order_dev = stream.clone_htod(&workload_order_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy workload_order failed: {:?}", e))
+        })?;
+        let workload_mean_dev = stream.clone_htod(&workload_mean_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy workload_mean failed: {:?}", e))
+        })?;
+        let workload_p_dev = stream.clone_htod(&workload_p_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy workload_p failed: {:?}", e))
+        })?;
+        let workload_fast_mult_dev = stream.clone_htod(&workload_fast_mult_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy workload_fast_mult failed: {:?}", e))
+        })?;
+        let resource_len_dev = stream.clone_htod(&resource_len_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy resource_len failed: {:?}", e))
+        })?;
+        let resource_values_dev = stream.clone_htod(&resource_values_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy resource_values failed: {:?}", e))
+        })?;
+        let resource_cdf_dev = stream.clone_htod(&resource_cdf_host).map_err(|e| {
+            BackendError::Validation(format!("alloc/copy resource_cdf failed: {:?}", e))
         })?;
 
         let mut out_arrival_attempts = stream.alloc_zeros::<u64>(num_runs).map_err(|e| {
@@ -326,7 +419,8 @@ impl GpuBackend {
             BackendError::Validation(format!("alloc out_sojourn_time_sq_sum failed: {:?}", e))
         })?;
 
-        let state_stride = scenario.capacity_k + 1;
+        let state_stride = 129usize;
+        let state_stride_u32 = state_stride as u32;
         let state_buffer_len = if self.save_pi_hat {
             state_stride * num_runs
         } else {
@@ -338,52 +432,33 @@ impl GpuBackend {
 
         let mut builder = stream.launch_builder(kernel);
 
-        let servers_n_u32 = scenario.servers_n as u32;
-        let capacity_k_u32 = scenario.capacity_k as u32;
-        let resource_len_u32 = scenario.resource_distribution.values.len() as u32;
-
         builder.arg(&num_runs_u32);
-        builder.arg(&scenario.arrival_rate);
-        builder.arg(&scenario.service_speed);
-        builder.arg(&scenario.max_time);
-        builder.arg(&scenario.warmup_time);
-        builder.arg(&servers_n_u32);
-        builder.arg(&capacity_k_u32);
-        builder.arg(&scenario.total_resource_r);
+        builder.arg(&arrival_rate_dev);
+        builder.arg(&service_speed_dev);
+        builder.arg(&max_time_dev);
+        builder.arg(&warmup_time_dev);
+        builder.arg(&servers_n_dev);
+        builder.arg(&capacity_k_dev);
+        builder.arg(&total_resource_r_dev);
         builder.arg(&seed_dev);
 
-        builder.arg(&arrival_mode);
-        builder.arg(&arrival_order);
-        builder.arg(&arrival_p);
-        builder.arg(&arrival_fast_mult);
+        builder.arg(&arrival_mode_dev);
+        builder.arg(&arrival_order_dev);
+        builder.arg(&arrival_p_dev);
+        builder.arg(&arrival_fast_mult_dev);
 
-        builder.arg(&workload_mode);
-        builder.arg(&workload_order);
-        builder.arg(&workload_mean);
-        builder.arg(&workload_p);
-        builder.arg(&workload_fast_mult);
+        builder.arg(&workload_mode_dev);
+        builder.arg(&workload_order_dev);
+        builder.arg(&workload_mean_dev);
+        builder.arg(&workload_p_dev);
+        builder.arg(&workload_fast_mult_dev);
 
         let collect_state_times_u32 = if self.save_pi_hat { 1_u32 } else { 0_u32 };
         builder.arg(&collect_state_times_u32);
-        builder.arg(&resource_len_u32);
-
-        builder.arg(&resource_values[0]);
-        builder.arg(&resource_values[1]);
-        builder.arg(&resource_values[2]);
-        builder.arg(&resource_values[3]);
-        builder.arg(&resource_values[4]);
-        builder.arg(&resource_values[5]);
-        builder.arg(&resource_values[6]);
-        builder.arg(&resource_values[7]);
-
-        builder.arg(&resource_cdf[0]);
-        builder.arg(&resource_cdf[1]);
-        builder.arg(&resource_cdf[2]);
-        builder.arg(&resource_cdf[3]);
-        builder.arg(&resource_cdf[4]);
-        builder.arg(&resource_cdf[5]);
-        builder.arg(&resource_cdf[6]);
-        builder.arg(&resource_cdf[7]);
+        builder.arg(&state_stride_u32);
+        builder.arg(&resource_len_dev);
+        builder.arg(&resource_values_dev);
+        builder.arg(&resource_cdf_dev);
 
         builder.arg(&mut out_arrival_attempts);
         builder.arg(&mut out_accepted_arrivals);
@@ -473,11 +548,13 @@ impl GpuBackend {
         };
         timings.dtoh += dtoh_started.elapsed();
 
-        let observed_time = scenario.max_time - scenario.warmup_time;
         let mut summaries = Vec::with_capacity(num_runs);
         let summary_started = Instant::now();
 
         for run_id in 0..num_runs {
+            let request = &requests[run_id];
+            let scenario = &request.scenario;
+            let observed_time = scenario.max_time - scenario.warmup_time;
             let mean_occupied_resource = resource_time[run_id] / observed_time;
             let loss_probability = if arrival_attempts[run_id] > 0 {
                 rejected_arrivals[run_id] as f64 / arrival_attempts[run_id] as f64
@@ -499,7 +576,8 @@ impl GpuBackend {
             };
             let (pi_hat, mean_num_jobs) = if self.save_pi_hat {
                 let state_offset = run_id * state_stride;
-                let pi_hat: Vec<f64> = state_times[state_offset..state_offset + state_stride]
+                let scenario_state_len = scenario.capacity_k + 1;
+                let pi_hat: Vec<f64> = state_times[state_offset..state_offset + scenario_state_len]
                     .iter()
                     .map(|x| *x / observed_time)
                     .collect();
@@ -530,7 +608,6 @@ impl GpuBackend {
                 0.0
             };
 
-            let request = &requests[run_id];
             let summary = RunSummary {
                 scenario_key: scenario.scenario_key.clone(),
                 scenario_name: scenario.scenario_name.clone(),
@@ -582,38 +659,22 @@ impl SimulationBackend for GpuBackend {
             return Ok(Vec::new());
         }
 
-        if requests.len() > self.max_batch_size {
-            return Err(BackendError::Validation(format!(
-                "GPU backend получил batch размера {}, что больше max_batch_size={}",
-                requests.len(),
-                self.max_batch_size
-            )));
-        }
-
         let (ctx, kernel, setup_elapsed) = self.get_or_init_runtime()?;
         let mut total_timings = GpuTimingBreakdown {
             setup_context: setup_elapsed,
             ..GpuTimingBreakdown::default()
         };
         let mut out = Vec::with_capacity(requests.len());
-        let mut group_start = 0usize;
-        while group_start < requests.len() {
-            let scenario_key = &requests[group_start].scenario.scenario_key;
-            let mut group_end = group_start + 1;
-            while group_end < requests.len()
-                && requests[group_end].scenario.scenario_key == *scenario_key
-                && group_end - group_start < self.max_batch_size
-            {
-                group_end += 1;
-            }
-
+        let mut chunk_start = 0usize;
+        while chunk_start < requests.len() {
+            let chunk_end = (chunk_start + self.max_batch_size).min(requests.len());
             let (summaries, timings) =
-                self.run_group_on_gpu(&requests[group_start..group_end], &ctx, &kernel)?;
+                self.run_group_on_gpu(&requests[chunk_start..chunk_end], &ctx, &kernel)?;
             out.extend(summaries);
             total_timings.kernel += timings.kernel;
             total_timings.dtoh += timings.dtoh;
             total_timings.summary += timings.summary;
-            group_start = group_end;
+            chunk_start = chunk_end;
         }
 
         eprintln!("GPU timing breakdown:");
