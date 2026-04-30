@@ -1,0 +1,214 @@
+# Отчет по графикам имитационной модели
+
+Данный отчет является результатом серии прогонов (20 репликаций в 1м прогоне), в которых 1 прогон сравнивает 3 значения $\lambda$ (75.0, 86.5, 98.0) при фиксированном $\sigma$ = 1.2.
+
+Сначана сравнивается 4 распределения времени работы против 1 фиксированного пуассоновского потока входящих заявок, потом наоборот 4 распределения входящего потока заявок против 1 фиксированного времени обслуживания. 
+
+Текущая архитектура является loss системой без очереди и state_dependancy. 
+
+## Чувствительность к распределению времени обсулуживания с фиксированным пуассоновским потоком входящих заявок
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_loss_probability_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_loss_probability_sigma-1p2_lambda-98.png" width="500">
+
+Вероятность отказа оценивается как $\hat{p}_{\mathrm{loss}} = \frac{R}{A}$, где $R$ - число отказов, $A$ - число попыток поступления. 
+
+Медианы графиков почти совпадают. У Heavy_exp разброс немного шире, чем у остальных т.к. больше вариативность длительности обслуживания. 
+
+Поскольку входной поток пуассоновский, истинные значения $p_{\mathrm{loss}}$ для всех типов распределений должны быть очень близки в силу свойства инвариантности. 
+
+При большом времени моделирования дисперсия такой оценки убывает. Основной эффект дают различия $\lambda$.
+
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_mean_service_time_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_mean_service_time_sigma-1p2_lambda-98.png" width="500">
+
+Все медианы сосредоточены около 0.8333. У детерминированного workload box почти вырожден в линию.
+У Erlang-4 разброс маленький, у Exponential чуть шире, у Heavy-tail - самый широкий boxplot.
+
+Пусть $W$ - объем работы, а $\sigma$ скорость обслуживания, тогда время обслуживания -> $S=\frac{W}{\sigma}.$
+При фиксированном среднем объёме работы $E[W]=1$ и $\sigma=1.2$ получаем $E[S]=\frac{E[W]}{\sigma}=\frac{1}{1.2}=0.8333\ldots$
+
+Следовательно, теоретическое среднее время обслуживания одинаково для всех распределений workload. Именно поэтому все boxplot’ы центрируются в одной точке (и будут продолжать центрироваться при большем числе репликаций).
+
+Разброс по от репликации к репликации обеспечивается разницей в дисперсиях распределений $\operatorname{Var}(S)=\frac{\operatorname{Var}(W)}{\sigma^2}$ (0 у детерменированного, небольшая для erlang_4, больше для экспоненциального и довольно большая для гиперэкспоненициального).
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_mean_sojourn_time_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_boxplot_mean_sojourn_time_sigma-1p2_lambda-98.png" width="500">
+
+Медианы вновь около $0.8333$.
+Порядок разбросов тот же: deterministic - почти точка, Erlang-4 - узкий, exponential - шире, heavy-tail - самый широкий.
+Если ожидание в очереди отсутствует, то для принятой заявки время пребывания в системе равно времени обслуживания $T_{\text{soj}} = S$. Следовательно $E[T_{\text{soj}}]=E[S]$. 
+
+График для среднего времени пребывания почти повторяет график среднего времени обслуживания. 
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_time_main_metrics_sigma-1p2.png" width="500">
+
+Все значения в окрестности теоретического уровня $1/\sigma=0.8333$; разницы по $\lambda$ почти нет.
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_delta_from_baseline_sigma-1p2.png" width="500">
+
+Максимальное отклонение для $P_{\mathrm{loss}}$ при $\lambda=98$ составляет порядка $0.015$ процентных пункта (абсолютная разница $\approx 0.00015$), т.е. очень мало на фоне самой вероятности отказа в $0.033$.
+Ненулевые отклонения - это эффект конечного имитационного эксперимента(особенность работы программы).
+
+#### Влияние распределения времени обслуживания ничтожно мало по сравнению с влиянием уровня нагрузки.
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_main_metrics_sigma-1p2.png" width="500">
+
+---
+
+$P_{\mathrm{loss}}$ - вероятность отказа, $\theta$ - пропускная способность, $N$ - число заявок в системе, $Z$ - занятый ресурс.
+
+Пропускная способность определяется по формуле: $\theta(\lambda) = \lambda(1 - P_{\mathrm{loss}}(\lambda))$. При $\lambda=98$ и отказе $\approx 3.3\%$: $\theta \approx 98(1 - 0.033) \approx 94.8$.
+
+Число заявок определяется по закону Литла: $E[N] \approx \theta E[S]$. При $\lambda=98$: $E[N] \approx 94.8 \cdot 0.8333 \approx 79$.
+
+Средний занятый ресурс: $E[D] = 2(0.25) + 4(0.25) + 8(0.3) + 12(0.15) + 16(0.05) = 6.5$. 
+    
+Таким образом, $E[Z] \approx E[N]E[D]$. Для $\lambda=75$: $62.5 \cdot 6.5 \approx 406.25$ (на графике $\approx 405\text{--}407$).
+
+#### При фиксированном $E[W]$ форма распределения $W$ почти не влияет на: $P_{\mathrm{loss}}, \theta, E[N], E[Z]$. 
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_loss_probability_bars_by_lambda_sigma-1p2.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_mean_num_jobs_bars_by_lambda_sigma-1p2.png" width="500">
+
+Данные графики демонстрируют, что на отказ влияет прежде всего $\lambda$. 
+* $P_{\mathrm{loss}}(75) \approx 0.0008$
+* $P_{\mathrm{loss}}(86.5) \approx 0.008$
+* $P_{\mathrm{loss}}(98) \approx 0.033$
+
+Рост сильно нелинейный из-за приближения к ресурсной границе $R=590$. Благодаря свойству **PASTA** (*Poisson Arrivals See Time Averages*), вероятность отказа на входе совпадает с долей времени, когда система заблокирована.
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_rejection_breakdown_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_rejection_breakdown_sigma-1p2_lambda-98.png" width="500">
+
+Графики подтверждают, что основной источник отказов - **ресурс $R$**, а не количество серверов $N$.
+
+Средняя емкость системы по ресурсу: $\frac{R}{E[D]} = \frac{590}{6.5} \approx 90.8$ при $N=96$ серверов. Получается что ресурс исчерпывается быстрее. 
+
+При $\lambda=98$ средний свободный ресурс составляет всего $\approx 83$ единицы, но из-за дисперсии возникают состояния, где новой заявке не хватает ресурса (особенно заявкам по 12-16 единиц).
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_stationary_distribution_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_stationary_distribution_sigma-1p2_lambda-98.png" width="500">
+
+Стационарные распределения числа заявок почти полностью совпадают для разных типов workload. Получили подтверждение (демонстрацию) свойства инвариантности ресурсных СМО: 
+
+**распределение зависит только от $E[W]$, но не от его формы.** 
+Изменение коэффициента вариации времени обслуживания от 0 (детерминированное распределение) до повышенного значения heavy-tail при heavy_exp  не приводит к существенному изменению стационарного распределения числа обработанных заявок
+
+---
+
+<img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_stationary_tail_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260427_231959__workload-sensitivity/plots/workload_sensitivity_stationary_tail_sigma-1p2_lambda-98.png" width="500">
+
+Хвостовые графики показывают вероятность P{N≥k}
+
+При λ=75 хвост начинает быстро падать при k≈60–65. При λ=98 система гораздо чаще находится в состояниях N≥80 и мы получаем рост отказов.
+
+Кривые разных workload family почти совпадают, хвостовая характеристика не почти не чувствительна к форме распределения времени обслуживания. 
+
+---
+
+### Вывод по серии: для пуассоновского входящего потока чувствительность к виду распределения времени обслуживания почти отсутствует. Основное влияние оказывает уровень нагрузки $\lambda$, а не форма распределения *workload*. 
+
+---
+
+## Чувствительность к распределению типу входящего потока заявок при фиксированном workload. 
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_loss_probability_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_loss_probability_sigma-1p2_lambda-98.png" width="500">
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_mean_service_time_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_mean_service_time_sigma-1p2_lambda-98.png" width="500">
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_time_main_metrics_sigma-1p2.png" width="500">
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_mean_sojourn_time_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_boxplot_mean_sojourn_time_sigma-1p2_lambda-98.png" width="500">
+
+Разброс по репликациям мал по сравнению с различиями между потоками
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_delta_from_baseline_sigma-1p2.png" width="500">
+
+Этот график показывает чувствительность потому относительно базового пуассоновского распределения.
+
+Так для Erlang-4 и Erlang-2: $\Delta P_{\text{loss}} < 0$, а для HyperExp: $\Delta P_{\text{loss}} > 0$. При $\lambda=98$ HyperExp даёт прирост вероятности отказа примерно на $6.5\text{--}7$ процентных пунктов относительно Poisson.
+
+По throughput, $E[N]$ и $E[Z]$ наоборот Erlang-4 и Erlang-2 дают положительный эффект, а HyperExp даёт отрицательный эффект. Модуль различия растет вместе с $\lambda$.
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_loss_probability_bars_by_lambda_sigma-1p2.png" width="500">
+
+Данный график показывает порядок потоков по устойчивости:
+$$\text{Erlang-4 (самый устойчивый)} \rightarrow \text{Erlang-2} \rightarrow \text{Poisson} \rightarrow \text{HyperExp (худший)}.$$
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_main_metrics_sigma-1p2.png" width="500">
+
+Вероятность отказа между распределениями имеет вид $P_{\text{loss}}(\text{Erlang-4}) < P_{\text{loss}}(\text{Erlang-2}) < P_{\text{loss}}(\text{Poisson}) \ll P_{\text{loss}}(\text{HyperExp})$.
+
+При $\lambda=98$ примерно $P_{\text{loss}}(\text{Erlang-4})\approx0.012$, $P_{\text{loss}}(\text{Erlang-2})\approx0.020$, $P_{\text{loss}}(\text{Poisson})\approx0.033$, $P_{\text{loss}}(\text{HyperExp})\approx0.100$.
+
+То есть гиперэкспоненциальный входящий поток даёт примерно трёхкратный рост вероятности отказа относительно Poisson и почти восьмикратный рост относительно Erlang-4.
+
+Строго пропускная способность связана с потерями как $\theta=\lambda(1-P_{\text{loss}})$. Так, при $\lambda=98$: пропускная способность по формуле $\theta_{\text{Poisson}}\approx98(1-0.033)\approx94.8,$ а $\theta_{\text{HyperExp}}\approx98(1-0.10)\approx88.2$.
+
+Это почти совпадает с полученным графиком. 
+
+Среднее число заявок объясняется законом Литтла для принятых заявок $E[N]\approx \theta E[S]$.
+
+Так как $E[S]\approx0.8333$, то для пуассоновского распределения при $\lambda=98$ получаем $E[N]\approx94.8\cdot0.8333\approx79$, а для гиперэкспоненциального $E[N]\approx88.2\cdot0.8333\approx73.5$.
+
+Это тоже совпадает с графиком.
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_mean_num_jobs_bars_by_lambda_sigma-1p2.png" width="500">
+
+Данный график показывает среднюю заполненность системы. Системы от самой свободной к самой заполненной:
+$$E[N]_{\text{Erlang-4}} > E[N]_{\text{Erlang-2}} > E[N]_{\text{Poisson}} > E[N]_{\text{HyperExp}}$$
+
+Стоит учитывать, что при, например, Erlang_4 мы получаем не менее нагруженную систему, а меньше отказов т.к. больше заявок реально попадают в систему. Для гиперэкспоненциального же распределения много заявок теряется во время всплесков активности. 
+Чем больше $P_{\text{loss}}$, тем меньше эффективная принятая интенсивность:$\lambda_{\text{eff}}=\lambda(1-P_{\text{loss}})$.
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_rejection_breakdown_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_rejection_breakdown_sigma-1p2_lambda-98.png" width="500">
+
+На данных графиках можно рассмотреть причины возникновения отказов. Основная причина отказов - нехватка ресурса. 
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_stationary_distribution_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_stationary_distribution_sigma-1p2_lambda-98.png" width="500">
+
+В отличие от распределения времени работы, эти графики демонстрируют значительные различия между видами распределений входящего потока. Так При $\lambda=75$ Erlang-4 даёт самый узкий пик, а гиперэкспонециальное распределение -  самый широкий и приплюснутый. При $\lambda$=98 различия еще более выраженные. 
+
+Регулярный поток стабилизирует число заявок в системе, а взрывной гиперэкспоненциальный создает перегруженные и недогруженные состояния. 
+
+---
+
+<img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_stationary_tail_sigma-1p2_lambda-75.png" width="500"> <img src="prog_GPU/results/20260428_100317__arrival-sensitivity/plots/arrival_sensitivity_stationary_tail_sigma-1p2_lambda-98.png" width="500">
+
+Данный график показывает хвосты различных распределений (редкие тяжелые события). Так например вероятность того, что при Erlang_4 в системе множество заявок (близко к пределу) почти нулевая. В свою очередь гиперэкспоненциальное распределение может иметь меньшее среднее число заявок, но в правом хвосте он хуже - больше отказов. Для loss-системы такие эпизоды критичны, потому что буфера нет.
+
+---
+
+### Вывод: тип входящего потока существенно влияет на ресурсную loss-систему, даже если средняя интенсивность ($\lambda$) одинаковая; регулярный поток уменьшает отказы, bursty-поток резко ухудшает систему; чем выше вариативность межприходных интервалов, тем выше вероятность отказа и тем ниже эффективная пропускная способность системы.
