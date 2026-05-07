@@ -626,11 +626,41 @@ def apply_common_axis_style(ax: plt.Axes) -> None:
     ax.spines["right"].set_visible(False)
 
 
+def mark_manual_layout(fig: plt.Figure) -> None:
+    """Запрещает save_figure вызывать tight_layout для фигур с ручной разметкой."""
+    setattr(fig, "_plots_reworked_manual_layout", True)
+
+
+def split_ylabel(label: str) -> str:
+    """Делает длинную вертикальную подпись компактнее: 2 строки вместо одной."""
+    if ", " in label:
+        left, right = label.split(", ", 1)
+        return f"{left},\n{right}"
+    if " [" in label:
+        left, right = label.split(" [", 1)
+        return f"{left}\n[{right}"
+    return label
+
+
+def add_side_colorbar(
+    fig: plt.Figure,
+    image: Any,
+    label: str,
+    *,
+    rect: tuple[float, float, float, float] = (0.895, 0.20, 0.018, 0.58),
+) -> None:
+    """Добавляет colorbar в отдельную ось справа, не поверх heatmap-панелей."""
+    cax = fig.add_axes(list(rect))
+    colorbar = fig.colorbar(image, cax=cax)
+    colorbar.set_label(label, labelpad=8)
+    colorbar.ax.tick_params(labelsize=9)
+
 def save_figure(ctx: PlotContext, fig: plt.Figure, stem: str) -> None:
-    try:
-        fig.tight_layout()
-    except Exception as exc:
-        ctx.notes.append(f"tight_layout не применён для {stem}: {exc}")
+    if not getattr(fig, "_plots_reworked_manual_layout", False):
+        try:
+            fig.tight_layout()
+        except Exception as exc:
+            ctx.notes.append(f"tight_layout не применён для {stem}: {exc}")
 
     for fmt in ctx.formats:
         out = ctx.output_dir / f"{stem}.{fmt}"
@@ -690,10 +720,11 @@ def plot_heatmaps_workload_arrival_by_lambda(
                 continue
 
             ncols = len(lambdas)
+
             fig, axes = plt.subplots(
                 1,
                 ncols,
-                figsize=(4.25 * ncols + 1.4, 0.58 * len(workloads) + 4.0),
+                figsize=(4.45 * ncols + 2.2, 0.62 * len(workloads) + 4.25),
                 squeeze=False,
             )
 
@@ -734,7 +765,7 @@ def plot_heatmaps_workload_arrival_by_lambda(
                     vmax=vmax,
                 )
 
-                ax.set_title(lambda_label(lam))
+                ax.set_title(lambda_label(lam), pad=10)
                 ax.set_xticks(np.arange(len(arrivals)))
                 ax.set_xticklabels(
                     [display_value(a) for a in arrivals],
@@ -763,21 +794,31 @@ def plot_heatmaps_workload_arrival_by_lambda(
                                 fontsize=8.1,
                             )
 
+            # Важно: ручная раскладка. Последняя heatmap заканчивается до colorbar.
+            fig.subplots_adjust(
+                left=0.075,
+                right=0.800,
+                bottom=0.205,
+                top=0.800,
+                wspace=0.115,
+            )
+
             if image is not None:
-                colorbar = fig.colorbar(
+                add_side_colorbar(
+                    fig,
                     image,
-                    ax=axes.ravel().tolist(),
-                    fraction=0.025,
-                    pad=0.025,
+                    metric_ylabel(metric),
+                    rect=(0.845, 0.225, 0.016, 0.515),
                 )
-                colorbar.set_label(metric_ylabel(metric))
 
             fig.suptitle(
                 f"Матрица workload × arrival: {metric_title(metric)}{subtitle_sigma(sigma)}",
                 fontsize=18,
                 fontweight="semibold",
-                y=1.02,
+                y=0.965,
             )
+
+            mark_manual_layout(fig)
 
             save_figure(
                 ctx,
@@ -1374,21 +1415,29 @@ def plot_joint_baseline_delta_heatmaps(
                                 fontsize=8.1,
                             )
 
+            fig.subplots_adjust(
+                            left=0.075,
+                            right=0.865,
+                            bottom=0.20,
+                            top=0.78,
+                            wspace=0.10,
+                        )
+
             if image is not None:
-                colorbar = fig.colorbar(
+                add_side_colorbar(
+                    fig,
                     image,
-                    ax=axes.ravel().tolist(),
-                    fraction=0.025,
-                    pad=0.025,
+                    delta_ylabel(metric),
+                    rect=(0.895, 0.22, 0.018, 0.52),
                 )
-                colorbar.set_label(delta_ylabel(metric))
 
             fig.suptitle(
                 f"Совместное смещение относительно workload=Детерм., arrival=Пуассон: {metric_title(metric)}{subtitle_sigma(sigma)}",
                 fontsize=17,
                 fontweight="semibold",
-                y=1.02,
+                y=0.965,
             )
+            mark_manual_layout(fig)
 
             save_figure(
                 ctx,
@@ -1493,7 +1542,7 @@ def plot_replication_boxplots(
                             box.set_alpha(0.75)
 
                     ax.set_title(f"workload = {display_value(workload)}")
-                    ax.set_ylabel(metric_ylabel(metric))
+                    ax.set_ylabel("")
                     apply_common_axis_style(ax)
 
                 if y_global:
@@ -1509,6 +1558,32 @@ def plot_replication_boxplots(
                     fontweight="semibold",
                     y=1.01,
                 )
+
+                # fig.suptitle(
+                #     f"Разброс по репликациям: {metric_title(metric)} | {lambda_label(lam)}{subtitle_sigma(sigma)}",
+                #     fontsize=18,
+                #     fontweight="semibold",
+                #     y=0.965,
+                # )
+
+                fig.text(
+                    0.025,
+                    0.50,
+                    split_ylabel(metric_ylabel(metric)),
+                    rotation=90,
+                    va="center",
+                    ha="center",
+                    fontsize=12,
+                )
+
+                fig.subplots_adjust(
+                    left=0.11,
+                    right=0.985,
+                    bottom=0.11,
+                    top=0.88,
+                    hspace=0.62,
+                )
+                mark_manual_layout(fig)
 
                 save_figure(
                     ctx,
@@ -1605,21 +1680,30 @@ def plot_rejection_component_heatmaps(ctx: PlotContext) -> None:
                                 fontsize=8.0,
                             )
 
+        fig.subplots_adjust(
+            left=0.07,
+            right=0.865,
+            bottom=0.11,
+            top=0.88,
+            wspace=0.10,
+            hspace=0.62,
+        )
+
         if image is not None:
-            colorbar = fig.colorbar(
+            add_side_colorbar(
+                fig,
                 image,
-                ax=axes.ravel().tolist(),
-                fraction=0.025,
-                pad=0.025,
+                "число отказов",
+                rect=(0.895, 0.18, 0.018, 0.64),
             )
-            colorbar.set_label("число отказов")
 
         fig.suptitle(
             f"Структура отказов по workload × arrival{subtitle_sigma(sigma)}",
             fontsize=18,
             fontweight="semibold",
-            y=1.02,
+            y=0.965,
         )
+        mark_manual_layout(fig)
 
         save_figure(
             ctx,

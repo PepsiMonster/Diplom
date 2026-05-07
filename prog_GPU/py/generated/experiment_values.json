@@ -7,9 +7,9 @@
   "servers_n": 96,
   "total_resource_r": 590,
   "arrival_rate_levels": [
-    75.0,
-    86.5,
-    98.0
+    90.0,
+    104.0,
+    116.0
   ],
   "service_speed_levels": [
     1.2
