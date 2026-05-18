@@ -40,6 +40,7 @@
 \usepackage{float}
 \usepackage{caption}
 \usepackage{tabularx}
+\usepackage{multirow}
 \usepackage{array}
 
 % Пути к изображениям
@@ -55,8 +56,15 @@
 
 %  Заголовки 
 \usepackage{titlesec}
-\titleformat{\chapter}{\bfseries\centering}{\thechapter}{1em}{}
+% Настройка формата глав (по центру, 14pt, жирный, заглавными буквами)
+\titleformat{\chapter}[block]{\bfseries\normalsize\centering}{\thechapter}{1em}{\MakeUppercase}
 \titlespacing*{\chapter}{0pt}{1.5\baselineskip}{1\baselineskip}
+
+% Настройка формата разделов (14pt, жирный)
+\titleformat{\section}[block]{\bfseries\normalsize}{\thesection}{1em}{}
+
+% Настройка формата подразделов (14pt, жирный)
+\titleformat{\subsection}[block]{\bfseries\normalsize}{\thesubsection}{1em}{}
 
 %  Названия служебных элементов 
 \renewcommand{\contentsname}{Оглавление}
@@ -228,7 +236,7 @@
 \input{sections/20_ch2.tex}
 \clearpage
 
-\chapter{Результаты вычислительного эксперимента и анализ чувствительности}
+\chapter{Вычислительный анализ чувствительности ресурсной системы}
 \input{sections/30_ch3.tex}
 \clearpage
 
