@@ -1,0 +1,12 @@
+\frametitle{Архитектура программного комплекса}
+Для дискретно-событийного моделирования разработан симулятор на \textbf{Rust}. Управление параметрами эксперимента осуществляется через конфигурационные файлы.
+
+    \begin{lstlisting}[language=json, caption={Фрагмент конфигурации (suite\_result.json)}]
+{
+  "suite_name": "baseline_gpu",
+  "replications": 40,
+  "servers_n": 96,
+  "total_resource_r": 590,
+  "arrival_rate_levels": [90.0, 104.0, 116.0]
+}
+    \end{lstlisting}

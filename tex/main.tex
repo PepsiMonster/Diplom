@@ -1,7 +1,7 @@
 % !TeX program = lualatex
 \documentclass[a4paper,14pt]{extreport}
 
-%  Геометрия страницы 
+%  Геометрия страницы
 \usepackage[
   left=30mm,
   right=15mm,
@@ -9,21 +9,21 @@
   bottom=20mm
 ]{geometry}
 
-%  Шрифты и язык (LuaLaTeX) 
+%  Шрифты и язык (LuaLaTeX)
 \usepackage{fontspec}
-\setmainfont{Times New Roman}
-\setsansfont{Arial}
-\setmonofont{Liberation Mono}
+\setmainfont{Times New Roman}[Ligatures=TeX]
+\setsansfont{Arial}[Ligatures=TeX]
+\setmonofont{Courier New}[Scale=0.95, Ligatures=TeX]
 
-\newfontfamily\cyrillicfont{Times New Roman}[Script=Cyrillic]
-\newfontfamily\cyrillicfontsf{Arial}[Script=Cyrillic]
-\newfontfamily\cyrillicfonttt{Liberation Mono}[Script=Cyrillic]
+\newfontfamily\cyrillicfont{Times New Roman}[Script=Cyrillic, Ligatures=TeX]
+\newfontfamily\cyrillicfontsf{Arial}[Script=Cyrillic, Ligatures=TeX]
+\newfontfamily\cyrillicfonttt{Courier New}[Scale=0.95, Script=Cyrillic, Ligatures=TeX]
 
 \usepackage{polyglossia}
 \setdefaultlanguage{russian}
 \setotherlanguage{english}
 
-%  Интервалы, абзацы, выравнивание 
+%  Интервалы, абзацы, выравнивание
 \usepackage{setspace}
 \onehalfspacing
 
@@ -34,42 +34,47 @@
 \usepackage{ragged2e}
 \justifying
 
-%  Математика/рисунки/таблицы 
+%  Математика/рисунки/таблицы
 \usepackage{amsmath,amssymb,mathtools}
 \usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit}
 \usepackage{float}
 \usepackage{caption}
+\usepackage{subcaption}
 \usepackage{tabularx}
 \usepackage{multirow}
 \usepackage{array}
+\usepackage[normalem]{ulem} % Для многострочного подчеркивания темы
 
 % Пути к изображениям
-\graphicspath{{images/}{figures/}}
+\graphicspath{{images/}{figures/}{images_appendix/}}
 
-%  Гиперссылки 
+%  Гиперссылки
 \usepackage[hidelinks]{hyperref}
 
-%  Списки 
+%  Списки
 \usepackage{enumitem}
 \setlist[itemize]{noitemsep, topsep=0pt}
 \setlist[enumerate]{noitemsep, topsep=0pt}
 
-%  Заголовки 
+%  Заголовки
 \usepackage{titlesec}
-% Настройка формата глав (по центру, 14pt, жирный, заглавными буквами)
 \titleformat{\chapter}[block]{\bfseries\normalsize\centering}{\thechapter}{1em}{\MakeUppercase}
-\titlespacing*{\chapter}{0pt}{1.5\baselineskip}{1\baselineskip}
+\titlespacing*{\chapter}{0pt}{-30pt}{1\baselineskip}
+\titlespacing*{name=\chapter,numberless}{0pt}{-30pt}{1\baselineskip}
 
-% Настройка формата разделов (14pt, жирный)
 \titleformat{\section}[block]{\bfseries\normalsize}{\thesection}{1em}{}
-
-% Настройка формата подразделов (14pt, жирный)
 \titleformat{\subsection}[block]{\bfseries\normalsize}{\thesubsection}{1em}{}
 
-%  Названия служебных элементов 
+%  Названия служебных элементов
 \renewcommand{\contentsname}{Оглавление}
 
-%  Библиография по ГОСТ 
+% Макросы для оформления кода и названий файлов в тексте
+\newcommand{\filename}[1]{\texttt{#1}}
+\newcommand{\code}[1]{\texttt{#1}}
+
+%  Библиография по ГОСТ
 \usepackage{csquotes}
 \usepackage[
   backend=biber,
@@ -81,22 +86,21 @@
 ]{biblatex}
 \addbibresource{bib/sources.bib}
 
-%  Служебные макросы титульного листа 
-\newcommand{\UniversityName}{«Российский университет дружбы народов имени Патриса Лумумбы»}
-% Если кафедра требует старую формулировку, замени строку выше на:
-% \newcommand{\UniversityName}{«Российский университет дружбы народов»}
+% ============================================================
+% Служебные макросы титульного листа
+% ============================================================
 
-\newcommand{\RUDNFaculty}{Факультет физико-математических и естественных наук}
-\newcommand{\RUDNDepartment}{Кафедра прикладной информатики и теории вероятностей}
+\newcommand{\UniversityName}{«РОССИЙСКИЙ УНИВЕРСИТЕТ ДРУЖБЫ НАРОДОВ\\ИМЕНИ ПАТРИСА ЛУМУМБЫ»}
+\newcommand{\RUDNFaculty}{Факультет \uline{физико-математических и естественных наук}}
+\newcommand{\RUDNDepartment}{Кафедра \uline{теории вероятностей и кибербезопасности}}
 
 \newcommand{\AdmissionText}{«Допустить к защите»}
-\newcommand{\DepartmentHeadPosition}{Заведующий кафедрой\\прикладной информатики\\и теории вероятностей}
+\newcommand{\DepartmentHeadPosition}{Заведующий кафедрой\\теории вероятностей\\и кибербезопасности}
 \newcommand{\DepartmentHeadRegalia}{д.т.н., профессор}
 \newcommand{\DepartmentHeadName}{К.\,Е.~Самуйлов}
 
-\newcommand{\Direction}{01.04.02 «Прикладная математика и информатика»}
-\newcommand{\Program}{«Теория вероятностей и математическая статистика»}
-
+\newcommand{\Direction}{01.04.02 «\uline{Прикладная математика и информатика}»}
+\newcommand{\Program}{«\uline{Теория вероятностей и математическая статистика}»}
 \newcommand{\ThesisType}{Выпускная квалификационная работа\\магистра}
 
 \newcommand{\ThesisTitle}{Анализ чувствительности ресурсных систем массового обслуживания к распределению времени обслуживания и типу входящего потока}
@@ -105,129 +109,230 @@
 \newcommand{\GroupName}{НПМмд-02-24}
 \newcommand{\StudentID}{1332249565}
 
-% Впиши фактические данные руководителя:
 \newcommand{\SupervisorName}{Сопин Эдуард Сергеевич}
-\newcommand{\SupervisorRegalia}{кандидат физико-математических наук}
-\newcommand{\SupervisorPosition}{доцент, младший научный сотрудник}
+\newcommand{\SupervisorRegalia}{к.ф.-м.н.}
+\newcommand{\SupervisorPosition}{доцент кафедры теории вероятностей и кибербезопасности}
 
 \newcommand{\City}{Москва}
 \newcommand{\Yearr}{2026}
 
-%  Титульный лист 
+% ============================================================
+% Титульный лист
+% ============================================================
+
 \newcommand{\maketitlepage}{
+\begingroup
+
+% На титульном листе поля чуть меньше, чтобы длинная тема
+% и новое полное название университета помещались на одну страницу.
+\newgeometry{
+  left=30mm,
+  right=15mm,
+  top=13mm,
+  bottom=13mm
+}
+
 \begin{titlepage}
 \thispagestyle{empty}
-\setstretch{1.0}
 
-%  Верхний блок 
+\setstretch{1.0}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+% Верхний блок (Министерство жирным, фак/каф 12pt)
 \begin{center}
-\small
-МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ\\
+\fontsize{13pt}{14.2pt}\selectfont
+\textbf{МИНИСТЕРСТВО НАУКИ И ВЫСШЕГО ОБРАЗОВАНИЯ\\
 РОССИЙСКОЙ ФЕДЕРАЦИИ\\
-ФЕДЕРАЛЬНОЕ ГОСУДАРСТВЕННОЕ АВТОНОМНОЕ\\
-ОБРАЗОВАТЕЛЬНОЕ УЧРЕЖДЕНИЕ ВЫСШЕГО ОБРАЗОВАНИЯ\\
-\textbf{\UniversityName}\\[0.4em]
+ФЕДЕРАЛЬНОЕ ГОСУДАРСТВЕННОЕ АВТОНОМНОЕ ОБРАЗОВАТЕЛЬНОЕ\\
+УЧРЕЖДЕНИЕ ВЫСШЕГО ОБРАЗОВАНИЯ\\
+\UniversityName}\\[0.2em]
+{\fontsize{12pt}{14.4pt}\selectfont
 \RUDNFaculty\\
-\RUDNDepartment
+\RUDNDepartment\par}
 \end{center}
 
-\vspace{0.6em}
+\vspace{0.7em}
 
-%  Допуск 
-\begin{flushleft}
-\normalsize
+% Блок допуска справа (13pt, выравнивание по правому краю)
+\noindent\hfill
+\begin{minipage}{0.44\textwidth}
+\raggedleft
+\fontsize{13pt}{15.6pt}\selectfont
 \AdmissionText\\
 \DepartmentHeadPosition\\
-\DepartmentHeadRegalia\\
-\underline{\hspace{3.5cm}} \DepartmentHeadName\\
-«\underline{\hspace{0.7cm}}» \underline{\hspace{2.0cm}} 20\underline{\hspace{0.7cm}} г.
-\end{flushleft}
-
-\vspace{0.9em}
-
-%  Тип работы и тема 
-\begin{center}
-\textbf{\ThesisType}\\[0.7em]
-Направление \Direction\\
-Магистерская программа \Program\\[0.9em]
-\textbf{ТЕМА}\\[0.3em]
-\begin{minipage}{0.92\textwidth}
-\centering
-\textbf{«\ThesisTitle»}
+\DepartmentHeadRegalia\\[0.35em]
+\underline{\hspace{2.8cm}} \DepartmentHeadName\\
+«\underline{\hspace{0.6cm}}» \underline{\hspace{2.0cm}} 20\underline{\hspace{0.5cm}} г.
 \end{minipage}
+
+\vspace{1.0em}
+
+% Тип работы, направление, программа, тема
+\begin{center}
+\fontsize{13pt}{15.6pt}\selectfont
+\textbf{\ThesisType}\\[0.45em]
+{\fontsize{12pt}{14.4pt}\selectfont
+Направление \Direction\\
+Магистерская программа \Program\\[0.75em]
+ТЕМА \textbf{«\expandafter\uline\expandafter{\ThesisTitle}»}\par}
 \end{center}
 
-\vspace{1.2em}
+\vspace{1.1em}
 
-%  Сведения о студенте и руководителе 
-\renewcommand{\arraystretch}{1.0}
+% --- НАЧАЛО ЗОНЫ 12 ШРИФТА ---
+{\fontsize{12pt}{14.4pt}\selectfont
+
+% Исполнитель: жирный, подчеркивание до конца строки
 \noindent
-\begin{tabularx}{\textwidth}{@{}p{0.49\textwidth}X@{}}
-Выполнил студент & \StudentName \\
-(Фамилия, имя, отчество) & \\[0.35em]
-
-Группа & \GroupName \\
-Студ. билет № & \StudentID \\[0.7em]
-
-Руководитель выпускной квалификационной работы &
-\SupervisorName, \SupervisorRegalia, \SupervisorPosition \\
-(Ф.И.О., степень, звание, должность) &
+\begin{tabularx}{\textwidth}{@{} l @{\hspace{1em}} X @{}}
+Выполнил студент & \centering\arraybackslash\textbf{\StudentName} \\
+\cline{2-2}
+& \centering\arraybackslash\footnotesize (Фамилия, имя, отчество)
 \end{tabularx}
+
+\vspace{1.5em}
+
+% Левый столбец (Группа, билет) и Правый столбец (Руководитель и подписи)
+\noindent
+\begin{minipage}[t]{0.35\textwidth}
+    \raggedright
+    Группа \GroupName\\[1em]
+    Студ. билет № \StudentID
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.62\textwidth}
+    \centering
+    \uline{Руководитель выпускной квалификационной работы}\\[0.5em]
+    \SupervisorName, \SupervisorRegalia,\\
+    \SupervisorPosition\\[-0.1em]
+    {\footnotesize (Ф.И.О., степень, звание, должность)}\\[1.5em]
+    % Подпись руководителя
+    \underline{\hspace{4.5cm}}\\[-0.15em]
+    {\footnotesize (Подпись)}\\[1.5em]
+    % Подпись автора
+    Автор \underline{\hspace{3.5cm}}\\[-0.15em]
+    {\footnotesize (Подпись)}
+\end{minipage}
 
 \vfill
 
-%  Подпись 
-\begin{flushright}
-Автор \underline{\hspace{3.2cm}}\\[-0.15em]
-(Подпись)
-\end{flushright}
-
-\vspace{0.8em}
-
-%  Город и год 
+% Город и год
 \begin{center}
 г.~\City\\
-\Yearr\ г.
+\Yearr~г.
 \end{center}
 
+\par} % --- КОНЕЦ ЗОНЫ 12 ШРИФТА ---
+
 \end{titlepage}
+
+\restoregeometry
+\endgroup
 }
+
+% ============================================================
+% Документ
+% ============================================================
 
 \begin{document}
 
-%  Титульный лист 
+%  Титульный лист
 \pagenumbering{gobble}
 \maketitlepage
 \clearpage
 
-%  Нумерация после титульного листа 
-\pagenumbering{arabic}
-\setcounter{page}{1}
 
-%  Аннотация 
-% Если кафедра требует именно "РЕФЕРАТ", замени заголовок ниже.
-\chapter*{АННОТАЦИЯ}
+%  Нумерация после титульного листа
+\pagenumbering{arabic}
+\setcounter{page}{2}
+
+%  Аннотация
+\phantomsection
 \addcontentsline{toc}{chapter}{АННОТАЦИЯ}
+
+\thispagestyle{plain}
+\begingroup
+\setstretch{1.0}
+\setlength{\parindent}{1.25cm}
+\setlength{\parskip}{0pt}
+
+\begin{center}
+{\bfseries Федеральное государственное автономное образовательное учреждение}\\
+{\bfseries высшего образования}\\[0.3em]
+{\bfseries «Российский университет дружбы народов\\
+имени Патриса Лумумбы»}
+\end{center}
+
+\vspace{2.1em}
+
+\begin{center}
+{\bfseries АННОТАЦИЯ}\\[0.6em]
+{\bfseries выпускной квалификационной работы}
+\end{center}
+
+\vspace{1.7em}
+
+\begin{center}
+\begin{minipage}{0.82\textwidth}
+\centering
+\StudentName\\[-0.15em]
+\hrulefill\\[-0.1em]
+{\small (фамилия, имя, отчество)}
+\end{minipage}
+\end{center}
+
+\vspace{1.1em}
+
+\vspace{1.1em}
+
+\noindent
+\begin{tabular}{@{}l@{\hspace{0.4em}}c@{}}
+на тему: &
+\underline{\makebox[0.72\textwidth][c]{Анализ чувствительности ресурсных систем массового}}\\[0.35em]
+&
+\underline{\makebox[0.72\textwidth][c]{обслуживания к распределению времени обслуживания}}\\[0.35em]
+&
+\underline{\makebox[0.72\textwidth][c]{и типу входящего потока}}
+\end{tabular}
+
+\vspace{1.8em}
+
 \input{sections/00_abstract.tex}
+
+\vfill
+
+\noindent
+\begin{tabular}{@{}p{0.25\textwidth}p{0.24\textwidth}p{0.30\textwidth}@{}}
+Автор ВКР &
+\centering\underline{\hspace{2.8cm}} &
+\centering\underline{\hspace{4.2cm}}\arraybackslash \\
+&
+\centering{\small (Подпись)} &
+\centering{\small (ФИО)}\arraybackslash
+\end{tabular}
+
+\endgroup
 \clearpage
 
-%  Оглавление 
+
+%  Оглавление
 \tableofcontents
 \clearpage
 
-%  Список сокращений и обозначений 
+%  Список сокращений и обозначений
 \chapter*{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
 \addcontentsline{toc}{chapter}{СПИСОК СОКРАЩЕНИЙ И ОБОЗНАЧЕНИЙ}
 \input{sections/01_abbrev.tex}
 \clearpage
 
-%  Введение 
+%  Введение
 \chapter*{ВВЕДЕНИЕ}
 \addcontentsline{toc}{chapter}{ВВЕДЕНИЕ}
 \input{sections/02_intro.tex}
 \clearpage
 
-%  Основные главы 
+%  Основные главы
 \chapter{Ресурсные системы массового обслуживания: обзор подходов и постановка задачи исследования}
 \input{sections/10_ch1.tex}
 \clearpage
@@ -240,31 +345,20 @@
 \input{sections/30_ch3.tex}
 \clearpage
 
-%  Заключение 
+%  Заключение
 \chapter*{ЗАКЛЮЧЕНИЕ}
 \addcontentsline{toc}{chapter}{ЗАКЛЮЧЕНИЕ}
 \input{sections/90_conclusion.tex}
 \clearpage
 
-%  Список использованных источников 
+%  Список использованных источников
 \phantomsection
 \printbibliography[heading=bibintoc, title={СПИСОК ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ}]
 \clearpage
 
-%  Приложения 
+%  Приложения
 \appendix
 
-\chapter{Таблицы параметров вычислительного эксперимента}
 \input{sections/91_appendix_a.tex}
-
-% Что можно раскоментить, посмотреть позже во время фин. оформления:
-
-% \clearpage
-% \chapter{Дополнительные выкладки}
-% \input{sections/92_appendix_b.tex}
-
-% \clearpage
-% \chapter{Листинги программной реализации}
-% \input{sections/93_appendix_c.tex}
 
 \end{document}

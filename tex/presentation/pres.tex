@@ -1,0 +1,130 @@
+% !TeX program = lualatex
+% aspectratio=169 делает презентацию широкой (16:9)
+\documentclass[aspectratio=169, 12pt]{beamer}
+
+% Современная минималистичная тема
+\usetheme{metropolis}
+
+% Настройка шрифтов (используем ваш Arial, так как для презентаций рубленые шрифты читаются лучше)
+\usepackage{fontspec}
+\setsansfont{Arial}[Ligatures=TeX]
+\setmonofont{Courier New}[Scale=0.95, Ligatures=TeX]
+
+\usepackage{polyglossia}
+\setdefaultlanguage{russian}
+\setotherlanguage{english}
+
+% Пакеты для математики, картинок и кода
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{graphicx}
+\usepackage{listings} % Для вставки кода
+\usepackage{xcolor}
+
+% Пути к картинкам (те же, что в дипломе)
+\graphicspath{{images/}{figures/}{images_appendix/}}
+
+% Настройка красивого отображения кода
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{orange},
+    commentstyle=\color{gray},
+    breaklines=true,
+    frame=single,
+    backgroundcolor=\color{black!5},
+    numbers=left,
+    numberstyle=\tiny\color{gray}
+}
+
+% --- Инфо для титульного слайда ---
+\title{Анализ чувствительности ресурсных систем массового обслуживания}
+\subtitle{к распределению времени обслуживания и типу входящего потока}
+\date{Май 2026}
+\author{Лобов Михаил Сергеевич}
+\institute{Российский университет дружбы народов имени Патриса Лумумбы}
+
+\begin{document}
+
+% 1. ТИТУЛЬНЫЙ СЛАЙД
+\begin{frame}
+  \titlepage
+\end{frame}
+
+% 2. СЛАЙД С ТЕКСТОМ И ФОРМУЛОЙ
+\section{Введение и постановка задачи}
+
+\begin{frame}{Актуальность исследования}
+    \begin{itemize}
+        \item Исследование ресурсных систем массового обслуживания (модель $GI/G/N/N/R$).
+        \item \textbf{Проблема:} Вычислительная сложность точного аналитического расчета многомерных систем при немарковских предположениях.
+        \item \textbf{Цель:} Анализ чувствительности стационарных характеристик.
+    \end{itemize}
+
+    \begin{block}{Ключевые метрики}
+        В фокусе внимания находится вероятность потери (блокировки) заявки:
+        \[
+        P_{\text{loss}} = 1 - \frac{\lambda_{\text{accepted}}}{\lambda_{\text{total}}}
+        \]
+    \end{block}
+\end{frame}
+
+% 3. СЛАЙД С КОДОМ (Важно: опция [fragile] обязательна!)
+\section{Программная реализация}
+
+\begin{frame}[fragile]{Архитектура программного комплекса}
+    Для дискретно-событийного моделирования разработан симулятор на \textbf{Rust}. Управление параметрами эксперимента осуществляется через конфигурационные файлы.
+
+    \begin{lstlisting}[language=json, caption={Фрагмент конфигурации (suite\_result.json)}]
+{
+  "suite_name": "baseline_gpu",
+  "replications": 40,
+  "servers_n": 96,
+  "total_resource_r": 590,
+  "arrival_rate_levels": [90.0, 104.0, 116.0]
+}
+    \end{lstlisting}
+\end{frame}
+
+% 4. СЛАЙД С КАРТИНКОЙ В ДВЕ КОЛОНКИ
+\section{Результаты вычислительного эксперимента}
+
+\begin{frame}{Влияние на загруженность системы}
+    \begin{columns}[c] % [c] центрирует колонки по вертикали
+        % Левая колонка для буллитов
+        \begin{column}{0.4\textwidth}
+            \begin{itemize}
+                \item Статистически значимое влияние типа входящего потока при $\lambda=90$.
+                \item Дисперсия результатов сопоставима с изменениями от типа распределения времени обслуживания.
+                \item Подтверждается вывод об инвариантности.
+            \end{itemize}
+        \end{column}
+
+        % Правая колонка для графика
+        \begin{column}{0.6\textwidth}
+            \begin{figure}
+                \centering
+                % Подставил название одной из ваших картинок тепловой карты
+                \includegraphics[width=\textwidth]{image_8f2a41.png}
+                \caption{Смещение числа заявок от базлайна}
+            \end{figure}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+% 5. ФИНАЛЬНЫЙ СЛАЙД
+\begin{frame}{Заключение}
+    \textbf{Основные результаты:}
+    \begin{enumerate}
+        \item Разработан высокопроизводительный симулятор.
+        \item Выявлено влияние вариации межприходных интервалов на вероятность блокировки заявок.
+        \item Исследованы границы применимости свойства инвариантности.
+    \end{enumerate}
+
+    \vspace{1cm}
+    \begin{center}
+        \Large \textbf{Спасибо за внимание!}\\
+        \normalsize Готов ответить на ваши вопросы.
+    \end{center}
+\end{frame}
+
+\end{document}
